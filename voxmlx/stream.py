@@ -16,9 +16,8 @@ N_RIGHT_PAD_TOKENS = 17
 
 
 def stream_transcribe(
-    model_path: str = "mistralai/Voxtral-Mini-4B-Realtime-2602",
+    model_path: str = "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
     temperature: float = 0.0,
-    duration: float | None = None,
 ):
     model, sp, config = load_model(model_path)
 
@@ -133,9 +132,6 @@ def stream_transcribe(
         start_time = time.monotonic()
         warned_no_audio = False
         while True:
-            if duration is not None and time.monotonic() - start_time >= duration:
-                break
-
             # Drain new audio from buffer (swap, not copy)
             with lock:
                 new_audio = audio_buf
@@ -315,25 +311,18 @@ def main():
     )
     parser.add_argument(
         "--model",
-        default="mistralai/Voxtral-Mini-4B-Realtime-2602",
+        default="mlx-community/Voxtral-Mini-4B-Realtime-6bit",
         help="Model path or HF model ID",
     )
     parser.add_argument(
-        "--temperature",
+        "--temp",
         type=float,
         default=0.0,
         help="Sampling temperature (0 = greedy)",
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=None,
-        help="Max recording seconds (default: until Ctrl+C)",
     )
     args = parser.parse_args()
 
     stream_transcribe(
         model_path=args.model,
-        temperature=args.temperature,
-        duration=args.duration,
+        temperature=args.temp,
     )

@@ -33,11 +33,8 @@ voxmlx --audio audio.flac
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--audio` | Path to audio file (omit to stream from mic) | None |
-| `--model` | Model path or HuggingFace model ID | `mistralai/Voxtral-Mini-4B-Realtime-2602` |
-| `--language` | Language code (e.g. `en`, `fr`, `de`) | `en` |
-| `--max-tokens` | Maximum output tokens | `4096` |
-| `--temperature` | Sampling temperature (`0` = greedy) | `0.0` |
-| `--duration` | Max recording seconds (streaming only) | Until Ctrl+C |
+| `--model` | Model path or HuggingFace model ID | `mlx-community/Voxtral-Mini-4B-Realtime-6bit` |
+| `--temp` | Sampling temperature (`0` = greedy) | `0.0` |
 
 ### `voxmlx-convert`
 
@@ -68,8 +65,8 @@ voxmlx-convert -q --mlx-path voxtral-mlx-4bit --upload-repo username/voxtral-mlx
 | `--hf-path` | HuggingFace model ID or local path | `mistralai/Voxtral-Mini-4B-Realtime-2602` |
 | `--mlx-path` | Output directory | `mlx_model` |
 | `-q`, `--quantize` | Quantize the model | Off |
-| `--q-group-size` | Quantization group size | `64` |
-| `--q-bits` | Bits per weight | `4` |
+| `--group-size` | Quantization group size | `64` |
+| `--bits` | Bits per weight | `4` |
 | `--dtype` | Cast weights (`float16`, `bfloat16`, `float32`) | None |
 | `--upload-repo` | HuggingFace repo to upload converted model | None |
 

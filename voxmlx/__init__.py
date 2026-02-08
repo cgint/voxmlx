@@ -26,7 +26,7 @@ def _build_prompt_tokens(
     return tokens, num_delay_tokens
 
 
-def load_model(model_path: str = "mistralai/Voxtral-Mini-4B-Realtime-2602"):
+def load_model(model_path: str = "mlx-community/Voxtral-Mini-4B-Realtime-6bit"):
     if not Path(model_path).exists():
         model_path = download_model(model_path)
     else:
@@ -39,9 +39,7 @@ def load_model(model_path: str = "mistralai/Voxtral-Mini-4B-Realtime-2602"):
 
 def transcribe(
     audio_path: str,
-    model_path: str = "mistralai/Voxtral-Mini-4B-Realtime-2602",
-    language: str = "en",
-    max_tokens: int = 4096,
+    model_path: str = "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
     temperature: float = 0.0,
 ) -> str:
     model, sp, config = load_model(model_path)
@@ -63,20 +61,15 @@ def transcribe(
 def main():
     parser = argparse.ArgumentParser(description="Voxtral Mini Realtime speech-to-text")
     parser.add_argument("--audio", default=None, help="Path to audio file (omit to stream from mic)")
-    parser.add_argument("--model", default="mistralai/Voxtral-Mini-4B-Realtime-2602", help="Model path or HF model ID")
-    parser.add_argument("--language", default="en", help="Language code (e.g. en, fr, de)")
-    parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum output tokens")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (0 = greedy)")
-    parser.add_argument("--duration", type=float, default=None, help="Max recording seconds (streaming only, default: until Ctrl+C)")
+    parser.add_argument("--model", default="mlx-community/Voxtral-Mini-4B-Realtime-6bit", help="Model path or HF model ID")
+    parser.add_argument("--temp", type=float, default=0.0, help="Sampling temperature (0 = greedy)")
     args = parser.parse_args()
 
     if args.audio is not None:
         text = transcribe(
             args.audio,
             model_path=args.model,
-            language=args.language,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
+            temperature=args.temp,
         )
         print(text)
     else:
@@ -84,6 +77,5 @@ def main():
 
         stream_transcribe(
             model_path=args.model,
-            temperature=args.temperature,
-            duration=args.duration,
+            temperature=args.temp,
         )

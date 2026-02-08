@@ -235,13 +235,13 @@ def main():
         help="Quantize the model",
     )
     parser.add_argument(
-        "--q-group-size",
+        "--group-size",
         type=int,
         default=64,
         help="Quantization group size (default: 64)",
     )
     parser.add_argument(
-        "--q-bits",
+        "--bits",
         type=int,
         default=4,
         help="Bits per weight for quantization (default: 4)",
@@ -263,8 +263,8 @@ def main():
         hf_path=args.hf_path,
         mlx_path=args.mlx_path,
         quantize=args.quantize,
-        q_group_size=args.q_group_size,
-        q_bits=args.q_bits,
+        q_group_size=args.group_size,
+        q_bits=args.bits,
         dtype=args.dtype,
         upload_repo=args.upload_repo,
     )

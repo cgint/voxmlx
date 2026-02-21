@@ -69,9 +69,12 @@ def main():
         help="List available input devices and exit",
     )
     parser.add_argument(
+        "-s",
         "--input-device",
+        nargs="?",
+        const="__PROMPT__",
         default=None,
-        help="Input device index or name (defaults to system input device)",
+        help="Input device index/name; pass -s alone to select interactively",
     )
     args = parser.parse_args()
 
@@ -88,10 +91,15 @@ def main():
         )
         print(text)
     else:
-        from .stream import stream_transcribe
+        from .stream import prompt_for_input_device, stream_transcribe
+        selected = (
+            prompt_for_input_device()
+            if args.input_device == "__PROMPT__"
+            else args.input_device
+        )
 
         stream_transcribe(
             model_path=args.model,
             temperature=args.temp,
-            input_device=args.input_device,
+            input_device=selected,
         )

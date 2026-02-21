@@ -16,6 +16,11 @@ N_LEFT_PAD_TOKENS = 32
 N_RIGHT_PAD_TOKENS = 17
 
 
+def _input_device_options() -> list[tuple[int, Any]]:
+    devices = sd.query_devices()
+    return [(idx, dev) for idx, dev in enumerate(devices) if dev["max_input_channels"] > 0]
+
+
 def _coerce_device(device: str | int | None) -> str | int | None:
     if device is None:
         return None
@@ -30,22 +35,41 @@ def _coerce_device(device: str | int | None) -> str | int | None:
 
 
 def list_input_devices() -> None:
-    devices = sd.query_devices()
     default_input = sd.default.device[0] if sd.default.device is not None else None
 
     print("Available input devices:")
-    found = False
-    for idx, dev in enumerate(devices):
-        if dev["max_input_channels"] <= 0:
-            continue
-        found = True
+    options = _input_device_options()
+    for idx, dev in options:
         marker = " (default)" if idx == default_input else ""
         print(
             f"  [{idx}] {dev['name']}{marker} "
             f"(in={dev['max_input_channels']}, sr={dev['default_samplerate']:.0f})"
         )
-    if not found:
+    if not options:
         print("  (no input devices found)")
+
+
+def prompt_for_input_device() -> str | int | None:
+    options = _input_device_options()
+    if not options:
+        print("No input devices found. Using system default.")
+        return None
+
+    list_input_devices()
+    default_input = sd.default.device[0] if sd.default.device is not None else None
+    default_label = (
+        f"{default_input}" if default_input in {idx for idx, _ in options} else "system default"
+    )
+    while True:
+        choice = input(f"Select input device (Enter for {default_label}): ").strip()
+        if choice == "":
+            return None
+        candidate = _coerce_device(choice)
+        try:
+            sd.query_devices(device=candidate, kind="input")
+            return candidate
+        except Exception:
+            print(f"Invalid input device: {choice}")
 
 
 def _describe_selected_input_device(device: str | int | None) -> dict[str, Any]:
@@ -391,17 +415,23 @@ def main():
         help="List available input devices and exit",
     )
     parser.add_argument(
+        "-s",
         "--input-device",
+        nargs="?",
+        const="__PROMPT__",
         default=None,
-        help="Input device index or name (defaults to system input device)",
+        help="Input device index/name; pass -s alone to select interactively",
     )
     args = parser.parse_args()
     if args.list_input_devices:
         list_input_devices()
         return
+    selected = (
+        prompt_for_input_device() if args.input_device == "__PROMPT__" else args.input_device
+    )
 
     stream_transcribe(
         model_path=args.model,
         temperature=args.temp,
-        input_device=args.input_device,
+        input_device=selected,
     )

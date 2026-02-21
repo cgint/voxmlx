@@ -1,6 +1,7 @@
 import argparse
 import threading
 import time
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -15,9 +16,59 @@ N_LEFT_PAD_TOKENS = 32
 N_RIGHT_PAD_TOKENS = 17
 
 
+def _coerce_device(device: str | int | None) -> str | int | None:
+    if device is None:
+        return None
+    if isinstance(device, str):
+        stripped = device.strip()
+        if stripped == "":
+            return None
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+        return stripped
+    return device
+
+
+def list_input_devices() -> None:
+    devices = sd.query_devices()
+    default_input = sd.default.device[0] if sd.default.device is not None else None
+
+    print("Available input devices:")
+    found = False
+    for idx, dev in enumerate(devices):
+        if dev["max_input_channels"] <= 0:
+            continue
+        found = True
+        marker = " (default)" if idx == default_input else ""
+        print(
+            f"  [{idx}] {dev['name']}{marker} "
+            f"(in={dev['max_input_channels']}, sr={dev['default_samplerate']:.0f})"
+        )
+    if not found:
+        print("  (no input devices found)")
+
+
+def _describe_selected_input_device(device: str | int | None) -> dict[str, Any]:
+    resolved = sd.query_devices(device=device, kind="input")
+    default_input = sd.default.device[0] if sd.default.device is not None else None
+    try:
+        resolved_index = sd.default.device[0] if device is None else int(device)
+    except (TypeError, ValueError):
+        resolved_index = None
+
+    return {
+        "index": resolved_index,
+        "name": resolved["name"],
+        "max_input_channels": resolved["max_input_channels"],
+        "default_samplerate": resolved["default_samplerate"],
+        "is_default": device is None or resolved_index == default_input,
+    }
+
+
 def stream_transcribe(
     model_path: str = "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
     temperature: float = 0.0,
+    input_device: str | int | None = None,
 ):
     model, sp, config = load_model(model_path)
 
@@ -117,6 +168,19 @@ def stream_transcribe(
         first_cycle = True
         prefilled = False
 
+    selected_device = _coerce_device(input_device)
+    device_info = _describe_selected_input_device(selected_device)
+    idx_display = (
+        str(device_info["index"]) if device_info["index"] is not None else "default"
+    )
+    default_label = " [default]" if device_info["is_default"] else ""
+    print(
+        "Using input device: "
+        f"[{idx_display}] {device_info['name']} "
+        f"(in={device_info['max_input_channels']}, "
+        f"sr={device_info['default_samplerate']:.0f}){default_label}",
+        flush=True,
+    )
     print("Listening... (Ctrl+C to stop)\n", flush=True)
 
     stream = sd.InputStream(
@@ -124,6 +188,7 @@ def stream_transcribe(
         channels=1,
         dtype="float32",
         blocksize=SAMPLES_PER_TOKEN,
+        device=selected_device,
         callback=callback,
     )
     stream.start()
@@ -320,9 +385,23 @@ def main():
         default=0.0,
         help="Sampling temperature (0 = greedy)",
     )
+    parser.add_argument(
+        "--list-input-devices",
+        action="store_true",
+        help="List available input devices and exit",
+    )
+    parser.add_argument(
+        "--input-device",
+        default=None,
+        help="Input device index or name (defaults to system input device)",
+    )
     args = parser.parse_args()
+    if args.list_input_devices:
+        list_input_devices()
+        return
 
     stream_transcribe(
         model_path=args.model,
         temperature=args.temp,
+        input_device=args.input_device,
     )

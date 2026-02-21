@@ -63,7 +63,22 @@ def main():
     parser.add_argument("--audio", default=None, help="Path to audio file (omit to stream from mic)")
     parser.add_argument("--model", default="mlx-community/Voxtral-Mini-4B-Realtime-6bit", help="Model path or HF model ID")
     parser.add_argument("--temp", type=float, default=0.0, help="Sampling temperature (0 = greedy)")
+    parser.add_argument(
+        "--list-input-devices",
+        action="store_true",
+        help="List available input devices and exit",
+    )
+    parser.add_argument(
+        "--input-device",
+        default=None,
+        help="Input device index or name (defaults to system input device)",
+    )
     args = parser.parse_args()
+
+    if args.list_input_devices:
+        from .stream import list_input_devices
+        list_input_devices()
+        return
 
     if args.audio is not None:
         text = transcribe(
@@ -78,4 +93,5 @@ def main():
         stream_transcribe(
             model_path=args.model,
             temperature=args.temp,
+            input_device=args.input_device,
         )

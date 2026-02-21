@@ -4,6 +4,39 @@ Realtime speech-to-text with
 [Voxtral Mini Realtime](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602)
 in [MLX](https://github.com/ml-explore/mlx).
 
+## Why this fork / what was added
+
+Besides the original Python package, this repo now also includes a minimal Phoenix/LiveView playground to validate and iterate on a **port-based STT architecture**:
+
+- Browser mic capture (LiveView hook)
+- Elixir GenServer using Erlang `Port` (`{:packet, 4}` framing)
+- Python worker process (`stt_port_worker.py`) executing `voxmlx`
+
+This was added to test integration quality and production-direction architecture (supervision, lifecycle, transport boundaries), while keeping the core `voxmlx` package unchanged.
+
+## Repository layout
+
+- `voxmlx/` — core Python library
+- `stt_playground/` — minimal Mix/Phoenix app with local Tailwind assets
+- `stt_port_worker.py` — Python subprocess worker used by the Elixir Port
+- `PORT_BASED_PYTHON_STT_PLAYGROUND.md` — integration notes
+- `python_subprocess_playground_integration.d2` / `.svg` — architecture diagram
+
+## Run the STT playground
+
+```bash
+cd stt_playground
+mix setup
+mix phx.server
+```
+
+Open http://localhost:4000
+
+Notes:
+- Worker path defaults to `../stt_port_worker.py`.
+- Override with `STT_WORKER_PATH=/abs/path/stt_port_worker.py mix phx.server`.
+- `uv` must be available in `PATH`.
+
 ## Install
 
 ```bash

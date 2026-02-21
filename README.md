@@ -1,41 +1,34 @@
+## Fork context (quick overview for this repository)
+
+This fork started from the `voxmlx` core and adds a minimal end-to-end app path so we can validate how the model behaves in real user workflows, not only in isolated library usage.
+
+### Intent
+
+This fork exists to answer a practical question: **how do we move from a strong STT core library to a real user-facing application flow that is reliable and maintainable?**
+
+The goal is not to replace `voxmlx`, but to validate productization decisions around it:
+
+- browser microphone streaming in a live UI
+- safe process boundary between web runtime and Python inference
+- robust lifecycle handling between app process and worker process
+- clear path for runtime hardening (stability, backpressure, observability)
+
+### What was added in this repository
+
+- `stt_playground/` — a minimal Phoenix/LiveView application that acts as the integration testbed
+- `stt_port_worker.py` — Python subprocess worker that executes transcription and communicates over Port framing
+- `PORT_BASED_PYTHON_STT_PLAYGROUND.md` — notes and rationale for the integration approach
+- `python_subprocess_playground_integration.d2` + `.svg` — visual architecture of the full data flow
+
+If you are new here: think of this repo as **original `voxmlx` + an experimental app shell used to validate the path toward production-grade end-user usage**.
+
+The original library content remains intact below.
+
 # voxmlx
 
 Realtime speech-to-text with
 [Voxtral Mini Realtime](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602)
 in [MLX](https://github.com/ml-explore/mlx).
-
-## Why this fork / what was added
-
-Besides the original Python package, this repo now also includes a minimal Phoenix/LiveView playground to validate and iterate on a **port-based STT architecture**:
-
-- Browser mic capture (LiveView hook)
-- Elixir GenServer using Erlang `Port` (`{:packet, 4}` framing)
-- Python worker process (`stt_port_worker.py`) executing `voxmlx`
-
-This was added to test integration quality and production-direction architecture (supervision, lifecycle, transport boundaries), while keeping the core `voxmlx` package unchanged.
-
-## Repository layout
-
-- `voxmlx/` — core Python library
-- `stt_playground/` — minimal Mix/Phoenix app with local Tailwind assets
-- `stt_port_worker.py` — Python subprocess worker used by the Elixir Port
-- `PORT_BASED_PYTHON_STT_PLAYGROUND.md` — integration notes
-- `python_subprocess_playground_integration.d2` / `.svg` — architecture diagram
-
-## Run the STT playground
-
-```bash
-cd stt_playground
-mix setup
-mix phx.server
-```
-
-Open http://localhost:4000
-
-Notes:
-- Worker path defaults to `../stt_port_worker.py`.
-- Override with `STT_WORKER_PATH=/abs/path/stt_port_worker.py mix phx.server`.
-- `uv` must be available in `PATH`.
 
 ## Install
 

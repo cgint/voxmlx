@@ -1,0 +1,45 @@
+direction: down
+
+title: {
+  label: "**Port-based Python STT Playground Integration**"
+}
+
+ui: {
+  label: "**Browser + LiveView UI**\nMic capture (16kHz float32)\nStart / Chunk / Stop events"
+  style.fill: "#E8F1FF"
+}
+
+liveview: {
+  label: "**DemoLive (Elixir)**\nOwns session_id + transcript\nForwards events to Demo.PythonPort"
+  style.fill: "#E8F1FF"
+}
+
+portgs: {
+  label: "**Demo.PythonPort (GenServer)**\nSingle owner of Port\nTracks sessions + owner monitors"
+  style.fill: "#EAF9EE"
+}
+
+portwire: {
+  label: "**Erlang Port**\n:binary + {:packet, 4}\nJSON message framing"
+  style.fill: "#FFF4E5"
+}
+
+python: {
+  label: "**stt_port_worker.py (Python)**\nrecv_packet/send_packet\nSession map + partial thread"
+  style.fill: "#FFF4E5"
+}
+
+voxmlx: {
+  label: "**voxmlx model path**\nload_model() once (lazy)\ngenerate() for partial/final text"
+  style.fill: "#FFEAF0"
+}
+
+ui -> liveview: "phx events"
+liveview -> portgs: "start_session / audio_chunk / stop_session"
+portgs -> portwire: "Port.command(JSON)"
+portwire -> python: "length-prefixed packets"
+python -> voxmlx: "transcribe snapshot / final audio"
+python -> portwire: "ready / partial / final / error"
+portwire -> portgs: "{:data, payload}"
+portgs -> liveview: "send(owner_pid, {:stt_event, msg})"
+liveview -> ui: "assign transcript + status"

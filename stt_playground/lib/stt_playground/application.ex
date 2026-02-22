@@ -90,6 +90,16 @@ defmodule SttPlayground.Application do
   end
 
   defp tts_project_path do
-    System.get_env("TTS_PROJECT_PATH") || Path.expand("../KittenTTS", File.cwd!())
+    System.get_env("TTS_PROJECT_PATH") ||
+      candidate_tts_project_path([
+        Path.expand("../KittenTTS", File.cwd!()),
+        Path.expand("../../KittenTTS", File.cwd!())
+      ])
   end
+
+  defp candidate_tts_project_path([path | rest]) do
+    if File.dir?(path), do: path, else: candidate_tts_project_path(rest)
+  end
+
+  defp candidate_tts_project_path([]), do: Path.expand("../../KittenTTS", File.cwd!())
 end

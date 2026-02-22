@@ -12,7 +12,10 @@ config :stt_playground,
   stt_queue_max: 128,
   stt_drain_interval_ms: 10,
   stt_drain_batch_size: 32,
-  stt_overload_policy: :drop_newest
+  stt_overload_policy: :drop_newest,
+  dspy_diagrammer_module: SttPlayground.AI.DSPyResponder,
+  dspy_model: "gemini-2.5-flash",
+  dspy_context_hints: ""
 
 # Configures the endpoint
 config :stt_playground, SttPlaygroundWeb.Endpoint,

@@ -16,3 +16,9 @@ This is the Mix/Phoenix version of the port-based Python STT playground.
 - Override worker path if needed:
   - `STT_WORKER_PATH=/absolute/path/to/stt_port_worker.py mix phx.server`
 - Requires `uv` in `PATH` because the worker is started via `uv run python ...`.
+- TTS worker defaults:
+  - `TTS_WORKER_PATH=../tts_port_worker.py`
+  - `TTS_PROJECT_PATH=../KittenTTS`
+- DSPy responder is enabled by default for `Run AI + Speak`:
+  - default module: `SttPlayground.AI.DSPyResponder`
+  - expected contract: `respond(opts) :: {:ok, text} | {:error, reason}`

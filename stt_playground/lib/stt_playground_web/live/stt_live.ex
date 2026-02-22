@@ -1,6 +1,7 @@
 defmodule SttPlaygroundWeb.SttLive do
   use SttPlaygroundWeb, :live_view
   require Logger
+  @default_dspy_module SttPlayground.AI.DSPyResponder
 
   @impl true
   def mount(_params, _session, socket) do
@@ -45,7 +46,21 @@ defmodule SttPlaygroundWeb.SttLive do
 
         <div class="mt-6 p-4 border rounded min-h-40 bg-white">
           <div class="text-sm text-gray-500 mb-2">Transcript</div>
-          <div class="whitespace-pre-wrap text-lg">{@transcript}</div>
+          <.form for={%{}} phx-change="transcript_change">
+            <textarea
+              name="transcript[text]"
+              rows="6"
+              class="w-full rounded border px-3 py-2"
+              placeholder="Transcript appears here (or paste text for testing)..."
+            ><%= @transcript %></textarea>
+          </.form>
+          <button
+            phx-click="ai_from_transcript"
+            class="mt-3 px-4 py-2 rounded text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50"
+            disabled={String.trim(@transcript) == ""}
+          >
+            Run AI + Speak
+          </button>
         </div>
 
         <div class="mt-6 p-4 border rounded bg-white">
@@ -83,6 +98,11 @@ defmodule SttPlaygroundWeb.SttLive do
   end
 
   @impl true
+  def handle_event("transcript_change", %{"transcript" => %{"text" => text}}, socket) do
+    {:noreply, assign(socket, :transcript, text)}
+  end
+
+  @impl true
   def handle_event("speak_text", %{"tts" => %{"text" => text}}, socket) do
     text = String.trim(text)
 
@@ -90,13 +110,41 @@ defmodule SttPlaygroundWeb.SttLive do
       {:noreply, socket}
     else
       case start_tts_session_and_speak(text) do
-        {:ok, session_id} ->
+        {:ok, session_id, spoken_text} ->
           {:noreply,
            socket
-           |> assign(:tts_text, text)
+           |> assign(:tts_text, spoken_text)
            |> assign(:tts_status, "speaking")
            |> assign(:tts_session_id, session_id)
            |> push_event("tts_stream_start", %{"session_id" => session_id})}
+
+        {:error, message} ->
+          {:noreply, assign(socket, :tts_status, "error: #{message}")}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("ai_from_transcript", _params, socket) do
+    transcript = String.trim(socket.assigns.transcript)
+
+    if transcript == "" do
+      {:noreply, assign(socket, :tts_status, "error: transcript is empty")}
+    else
+      case transform_text_with_dspy(transcript) do
+        {:ok, ai_output, ai_status} ->
+          case start_tts_session_and_speak(ai_output) do
+            {:ok, session_id, spoken_text} ->
+              {:noreply,
+               socket
+               |> assign(:tts_text, spoken_text)
+               |> assign(:tts_status, ai_status)
+               |> assign(:tts_session_id, session_id)
+               |> push_event("tts_stream_start", %{"session_id" => session_id})}
+
+            {:error, message} ->
+              {:noreply, assign(socket, :tts_status, "error: #{message}")}
+          end
 
         {:error, message} ->
           {:noreply, assign(socket, :tts_status, "error: #{message}")}
@@ -145,12 +193,75 @@ defmodule SttPlaygroundWeb.SttLive do
     {:noreply, socket |> assign(:recording, false) |> assign(:status, "error: #{message}")}
   end
 
+  defp transform_text_with_dspy(text) do
+    case dspy_diagrammer_module() do
+      nil ->
+        {:error, "DSPy module not configured"}
+
+      module ->
+        dspy_opts = [
+          text: text,
+          context_hints: Application.get_env(:stt_playground, :dspy_context_hints, ""),
+          previous_d2_diagram: "",
+          model: Application.get_env(:stt_playground, :dspy_model, "gemini-2.5-flash"),
+          api_key: System.get_env("GEMINI_API_KEY") || System.get_env("GOOGLE_API_KEY")
+        ]
+
+        invoke_dspy_module(module, dspy_opts)
+    end
+  rescue
+    e ->
+      Logger.warning("[live][tts] DSPy transform exception: #{inspect(e)}")
+      {:error, "DSPy exception: #{inspect(e)}"}
+  end
+
+  defp dspy_diagrammer_module do
+    module = Application.get_env(:stt_playground, :dspy_diagrammer_module, @default_dspy_module)
+
+    cond do
+      is_atom(module) and Code.ensure_loaded?(module) and function_exported?(module, :respond, 1) ->
+        module
+
+      is_binary(module) ->
+        maybe_module = module |> String.split(".") |> Module.safe_concat()
+
+        if Code.ensure_loaded?(maybe_module) and function_exported?(maybe_module, :respond, 1) do
+          maybe_module
+        else
+          nil
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp invoke_dspy_module(module, dspy_opts) do
+    result = apply(module, :respond, [dspy_opts])
+
+    case result do
+      {:ok, output} when is_binary(output) and output != "" ->
+        {:ok, output, "speaking (DSPy)"}
+
+      {:ok, _} ->
+        {:error, "DSPy returned empty output"}
+
+      {:error, reason} ->
+        Logger.warning("[live][tts] DSPy transform failed: #{inspect(reason)}")
+        {:error, "DSPy failed: #{inspect(reason)}"}
+
+      other ->
+        Logger.warning("[live][tts] DSPy transform unexpected result: #{inspect(other)}")
+        {:error, "DSPy returned unexpected result"}
+    end
+  end
+
   defp start_tts_session_and_speak(text) do
     if Process.whereis(SttPlayground.TTS.PythonPort) do
       session_id = Integer.to_string(System.unique_integer([:positive]))
       :ok = SttPlayground.TTS.PythonPort.start_session(session_id, self())
       SttPlayground.TTS.PythonPort.speak_text(session_id, text)
-      {:ok, session_id}
+      {:ok, session_id, text}
     else
       {:error, "tts worker not running"}
     end

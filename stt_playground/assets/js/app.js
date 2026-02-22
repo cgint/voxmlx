@@ -240,6 +240,59 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks,
 })
 
+class TtsStreamPlayer {
+  constructor() {
+    this.audioCtx = null
+    this.nextStartTime = 0
+    this.activeSessionId = null
+  }
+
+  ensureContext() {
+    if (!this.audioCtx) {
+      this.audioCtx = new AudioContext({sampleRate: 24000})
+      this.nextStartTime = this.audioCtx.currentTime
+    }
+  }
+
+  startSession(sessionId) {
+    this.activeSessionId = sessionId
+    this.ensureContext()
+    if (this.audioCtx.state === "suspended") this.audioCtx.resume()
+    if (this.audioCtx) {
+      this.nextStartTime = this.audioCtx.currentTime
+    }
+  }
+
+  enqueueChunk(sessionId, pcmB64, sampleRate) {
+    if (!sessionId || sessionId !== this.activeSessionId) return
+    this.ensureContext()
+
+    const raw = atob(pcmB64)
+    const bytes = new Uint8Array(raw.length)
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+
+    const pcm = new Float32Array(bytes.buffer)
+    const audioBuffer = this.audioCtx.createBuffer(1, pcm.length, sampleRate || 24000)
+    audioBuffer.copyToChannel(pcm, 0)
+
+    const source = this.audioCtx.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(this.audioCtx.destination)
+
+    const startAt = Math.max(this.nextStartTime, this.audioCtx.currentTime)
+    source.start(startAt)
+    this.nextStartTime = startAt + audioBuffer.duration
+  }
+}
+
+const ttsPlayer = new TtsStreamPlayer()
+window.addEventListener("phx:tts_stream_start", ({detail}) => {
+  ttsPlayer.startSession(detail.session_id)
+})
+window.addEventListener("phx:tts_audio_chunk", ({detail}) => {
+  ttsPlayer.enqueueChunk(detail.session_id, detail.pcm_b64, detail.sample_rate)
+})
+
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))

@@ -1,7 +1,7 @@
 direction: down
 
 title: {
-  label: "**Port-based Python STT Playground Integration**"
+  label: "**Port-based Python STT + DSPy/Ollama Integration**"
 }
 
 ui: {
@@ -10,7 +10,7 @@ ui: {
 }
 
 liveview: {
-  label: "**DemoLive (Elixir)**\nOwns session_id + transcript\nForwards events to Demo.PythonPort"
+  label: "**DemoLive (Elixir)**\nOwns session_id + transcript\nForwards events to Demo.PythonPort\nTriggers ai_from_transcript"
   style.fill: "#E8F1FF"
 }
 
@@ -34,6 +34,16 @@ voxmlx: {
   style.fill: "#FFEAF0"
 }
 
+dspy: {
+  label: "**DSPyResponder / DSPyClient (Elixir)**\nNormalizes model + provider opts\nBuilds LM and requests completion"
+  style.fill: "#F3E8FF"
+}
+
+ollama: {
+  label: "**Local Ollama (llama3.2)**\nOpenAI-compatible endpoint\nDefault base_url: http://localhost:11434/v1"
+  style.fill: "#F3E8FF"
+}
+
 ui -> liveview: "phx events"
 liveview -> portgs: "start_session / audio_chunk / stop_session"
 portgs -> portwire: "Port.command(JSON)"
@@ -43,3 +53,7 @@ python -> portwire: "ready / partial / final / error"
 portwire -> portgs: "{:data, payload}"
 portgs -> liveview: "send(owner_pid, {:stt_event, msg})"
 liveview -> ui: "assign transcript + status"
+liveview -> dspy: "ai_from_transcript (transcript text)"
+dspy -> ollama: "chat completion request"
+ollama -> dspy: "assistant output"
+dspy -> liveview: "{:ok, output} | {:error, reason}"

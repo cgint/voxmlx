@@ -19,8 +19,32 @@ The goal is not to replace `voxmlx`, but to validate productization decisions ar
 - `stt_port_worker.py` — Python subprocess worker that executes transcription and communicates over Port framing
 - `PORT_BASED_PYTHON_STT_PLAYGROUND.md` — notes and rationale for the integration approach
 - `python_subprocess_playground_integration.d2` + `.svg` — visual architecture of the full data flow
+- `stt_playground/scripts/dspy_ollama_playground.exs` — tiny script to validate DSPy with local Ollama
 
 If you are new here: think of this repo as **original `voxmlx` + an experimental app shell used to validate the path toward production-grade end-user usage**.
+
+### Local Ollama defaults for AI response generation
+
+The playground's DSPy response path is configured to use local Ollama by default:
+
+- model: `ollama/llama3.2`
+- base URL: `http://localhost:11434/v1` (override with `OLLAMA_BASE_URL`)
+- API key: optional (`OLLAMA_API_KEY` may be empty for local setups)
+
+Quick smoke test for the DSPy + Ollama path:
+
+```bash
+cd stt_playground
+mix run scripts/dspy_ollama_playground.exs
+```
+
+You can override defaults when needed:
+
+```bash
+cd stt_playground
+OLLAMA_MODEL=ollama/llama3.2 OLLAMA_BASE_URL=http://localhost:11434/v1 OLLAMA_API_KEY="" \
+  mix run scripts/dspy_ollama_playground.exs
+```
 
 The original library content remains intact below.
 

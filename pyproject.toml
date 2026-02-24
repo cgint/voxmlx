@@ -16,7 +16,6 @@ dependencies = [
     "sounddevice",
     "huggingface-hub",
     "mistral-common",
-    "sentencepiece",
 ]
 
 # This repo contains non-Python trees (Phoenix app + OpenSpec artifacts) at the

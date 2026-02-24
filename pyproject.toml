@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,8 +19,16 @@ dependencies = [
     "sentencepiece",
 ]
 
+# This repo contains non-Python trees (Phoenix app + OpenSpec artifacts) at the
+# top level. Explicitly package only the actual Python library.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["voxmlx*"]
+exclude = ["stt_playground*", "openspec*"]
+
 [tool.setuptools.dynamic]
-version = {attr = "voxmlx.__version__"}
+# Don't import voxmlx/__init__.py during build; it imports runtime deps.
+version = {attr = "voxmlx._version.__version__"}
 
 [project.scripts]
 voxmlx = "voxmlx:main"

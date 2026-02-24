@@ -14,7 +14,7 @@ config :stt_playground,
   stt_drain_batch_size: 32,
   stt_overload_policy: :drop_newest,
   dspy_diagrammer_module: SttPlayground.AI.DSPyResponder,
-  dspy_model: "gemini-2.5-flash",
+  dspy_model: "ollama/llama3.2",
   dspy_context_hints: ""
 
 # Configures the endpoint

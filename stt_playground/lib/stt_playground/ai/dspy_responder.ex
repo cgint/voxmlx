@@ -13,7 +13,7 @@ defmodule SttPlayground.AI.DSPyResponder do
   alias SttPlayground.AI.DSPyClient
   alias SttPlayground.AI.DSPyResponder.Signature
 
-  @default_model "gemini-2.5-flash"
+  @default_model "ollama/llama3.2"
 
   @instruction """
   Answer the user's text clearly and directly.

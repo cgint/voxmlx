@@ -202,9 +202,8 @@ defmodule SttPlaygroundWeb.SttLive do
         dspy_opts = [
           text: text,
           context_hints: Application.get_env(:stt_playground, :dspy_context_hints, ""),
-          previous_d2_diagram: "",
-          model: Application.get_env(:stt_playground, :dspy_model, "gemini-2.5-flash"),
-          api_key: System.get_env("GEMINI_API_KEY") || System.get_env("GOOGLE_API_KEY")
+          model: Application.get_env(:stt_playground, :dspy_model, "ollama/llama3.2"),
+          api_key: System.get_env("OLLAMA_API_KEY") || ""
         ]
 
         invoke_dspy_module(module, dspy_opts)

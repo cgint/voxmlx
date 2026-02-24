@@ -1,59 +1,44 @@
 direction: down
 
 title: {
-  label: "**Port-based Python STT + DSPy/Ollama Integration**"
+  label: "**Speech App Flow (High-Level)**"
 }
 
-ui: {
-  label: "**Browser + LiveView UI**\nMic capture (16kHz float32)\nStart / Chunk / Stop events"
+user: {
+  label: "**User**\nSpeaks and taps controls"
+  style.fill: "#F1F5F9"
+}
+
+app: {
+  label: "**Web App (LiveView)**\nCoordinates recording, AI response, and playback"
   style.fill: "#E8F1FF"
 }
 
-liveview: {
-  label: "**DemoLive (Elixir)**\nOwns session_id + transcript\nForwards events to Demo.PythonPort\nTriggers ai_from_transcript"
-  style.fill: "#E8F1FF"
-}
-
-portgs: {
-  label: "**Demo.PythonPort (GenServer)**\nSingle owner of Port\nTracks sessions + owner monitors"
+stt: {
+  label: "**Speech-to-Text Worker (Python + voxmlx)**\nTurns live audio into transcript text"
   style.fill: "#EAF9EE"
 }
 
-portwire: {
-  label: "**Erlang Port**\n:binary + {:packet, 4}\nJSON message framing"
-  style.fill: "#FFF4E5"
-}
-
-python: {
-  label: "**stt_port_worker.py (Python)**\nrecv_packet/send_packet\nSession map + partial thread"
-  style.fill: "#FFF4E5"
-}
-
-voxmlx: {
-  label: "**voxmlx model path**\nload_model() once (lazy)\ngenerate() for partial/final text"
-  style.fill: "#FFEAF0"
-}
-
 dspy: {
-  label: "**DSPyResponder / DSPyClient (Elixir)**\nNormalizes model + provider opts\nBuilds LM and requests completion"
+  label: "**AI Text Transformer (DSPy + Ollama)**\nConverts transcript into better spoken output"
   style.fill: "#F3E8FF"
 }
 
-ollama: {
-  label: "**Local Ollama (llama3.2)**\nOpenAI-compatible endpoint\nDefault base_url: http://localhost:11434/v1"
-  style.fill: "#F3E8FF"
+tts: {
+  label: "**Text-to-Speech Worker (Python)**\nConverts response text into streamed audio"
+  style.fill: "#FFF4E5"
 }
 
-ui -> liveview: "phx events"
-liveview -> portgs: "start_session / audio_chunk / stop_session"
-portgs -> portwire: "Port.command(JSON)"
-portwire -> python: "length-prefixed packets"
-python -> voxmlx: "transcribe snapshot / final audio"
-python -> portwire: "ready / partial / final / error"
-portwire -> portgs: "{:data, payload}"
-portgs -> liveview: "send(owner_pid, {:stt_event, msg})"
-liveview -> ui: "assign transcript + status"
-liveview -> dspy: "ai_from_transcript (transcript text)"
-dspy -> ollama: "chat completion request"
-ollama -> dspy: "assistant output"
-dspy -> liveview: "{:ok, output} | {:error, reason}"
+browser: {
+  label: "**Browser Audio Output**\nPlays generated speech"
+  style.fill: "#FFF4E5"
+}
+
+user -> app: "Start/stop + microphone audio"
+app -> stt: "Send audio for transcription"
+stt -> app: "Return live/final transcript"
+app -> dspy: "Ask AI to rewrite/shape response"
+dspy -> app: "Return response text"
+app -> tts: "Send response text to synthesize"
+tts -> browser: "Stream playable speech audio"
+browser -> user: "User hears spoken result"

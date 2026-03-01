@@ -368,6 +368,50 @@ defmodule SttPlaygroundWeb.SttLiveTest do
     end)
   end
 
+  test "new turn does not repeat previously committed user turn when STT snapshot is cumulative", %{conn: conn} do
+    with_voice_auto_submit_env([enabled: false], fn ->
+      {:ok, view, _html} = live(conn, "/")
+      render_hook(view, "start_stream", %{})
+      sid = current_session_id(view)
+
+      # First user turn
+      send(
+        view.pid,
+        {:stt_event, %{"event" => "partial", "session_id" => sid, "text" => "Hello, sir."}}
+      )
+
+      render_click(view, "ai_from_transcript", %{})
+      assert_receive {:fake_responder_called, _text}, 500
+
+      history1 = current_assign(view, :conversation_history)
+      assert Enum.map(history1, & &1.role) == [:user, :assistant]
+      assert Enum.at(history1, 0).content == "Hello, sir."
+
+      # Next STT update includes the previous turn as a prefix (cumulative snapshot)
+      send(
+        view.pid,
+        {:stt_event,
+         %{
+           "event" => "partial",
+           "session_id" => sid,
+           "text" => "Hello, sir. What is the capital of France?"
+         }}
+      )
+
+      assert current_assign(view, :active_turn_text) == "What is the capital of France?"
+
+      # Second submit should commit only the new turn text (no duplicated prefix)
+      render_click(view, "ai_from_transcript", %{})
+      assert_receive {:fake_responder_called, _text}, 500
+
+      history2 = current_assign(view, :conversation_history)
+
+      assert history2
+             |> Enum.filter(&(&1.role == :user))
+             |> Enum.map(& &1.content) == ["Hello, sir.", "What is the capital of France?"]
+    end)
+  end
+
   test "auto-submit commits one user turn and one assistant turn after final + pause", %{
     conn: conn
   } do

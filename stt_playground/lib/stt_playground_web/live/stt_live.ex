@@ -25,6 +25,10 @@ defmodule SttPlaygroundWeb.SttLive do
      # Turn-based conversation state
      |> assign(:active_turn_text, "")
      |> assign(:conversation_history, [])
+     # Last transcript snapshot received from STT (often cumulative for the whole session)
+     |> assign(:stt_snapshot_text, "")
+     # Anchor snapshot captured at the start of the current user turn
+     |> assign(:turn_start_stt_snapshot_text, "")
      |> assign(:last_transcript_change_ms, nil)
      |> assign(:last_final_ms, nil)
      |> assign(:final_snapshot, nil)
@@ -179,12 +183,18 @@ defmodule SttPlaygroundWeb.SttLive do
 
   @impl true
   def handle_event("clear", _params, socket) do
+    # If STT snapshots are cumulative for the whole session, clearing the conversation should not
+    # cause previously spoken text to reappear in the next active turn. Anchor the next turn at the
+    # most recent snapshot we've seen.
+    turn_start_anchor = socket.assigns.stt_snapshot_text |> to_string()
+
     {:noreply,
      socket
      |> cancel_auto_submit_timer()
      |> assign(:active_turn_text, "")
      |> assign(:transcript, "")
      |> assign(:conversation_history, [])
+     |> assign(:turn_start_stt_snapshot_text, turn_start_anchor)
      |> assign(:last_transcript_change_ms, nil)
      |> assign(:last_final_ms, nil)
      |> assign(:final_snapshot, nil)
@@ -255,6 +265,8 @@ defmodule SttPlaygroundWeb.SttLive do
        socket
        |> reset_stt_audio_gating()
        |> mark_transcription_caught_up()
+       |> assign(:stt_snapshot_text, "")
+       |> assign(:turn_start_stt_snapshot_text, "")
        |> assign(:recording, true)
        |> assign(:status, "recording")
        |> assign(:session_id, session_id)
@@ -504,6 +516,48 @@ defmodule SttPlaygroundWeb.SttLive do
     Application.get_env(:stt_playground, :tts_port_module, SttPlayground.TTS.PythonPort)
   end
 
+  defp normalize_stt_snapshot(text) when is_binary(text) do
+    text
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp derive_turn_text_from_stt_snapshot(snapshot_text, turn_start_snapshot_text)
+       when is_binary(snapshot_text) do
+    snapshot = normalize_stt_snapshot(snapshot_text)
+    turn_start = normalize_stt_snapshot(to_string(turn_start_snapshot_text || ""))
+
+    cond do
+      turn_start == "" ->
+        snapshot
+
+      snapshot == turn_start ->
+        ""
+
+      String.starts_with?(snapshot, turn_start) ->
+        snapshot
+        |> String.slice(String.length(turn_start)..-1//1)
+        |> to_string()
+        |> String.trim_leading()
+
+      true ->
+        # Safe fallback: if we can't subtract the anchor (e.g. punctuation rewrite),
+        # treat the snapshot as the current turn text.
+        snapshot
+    end
+  end
+
+  defp update_active_turn_from_stt_snapshot(socket, snapshot_text) when is_binary(snapshot_text) do
+    snapshot_norm = normalize_stt_snapshot(snapshot_text)
+
+    turn_text =
+      derive_turn_text_from_stt_snapshot(snapshot_norm, socket.assigns.turn_start_stt_snapshot_text)
+
+    socket
+    |> assign(:stt_snapshot_text, snapshot_norm)
+    |> update_active_turn_text(turn_text)
+  end
+
   defp update_active_turn_text(socket, text) when is_binary(text) do
     prev = socket.assigns.active_turn_text
 
@@ -637,6 +691,10 @@ defmodule SttPlaygroundWeb.SttLive do
         config = socket.assigns.voice_turn_auto_submit
         max_messages = config.history_max_messages
 
+        # Capture the most recent STT snapshot at the moment we submit the turn.
+        # If STT snapshots are cumulative for the session, this becomes the anchor for the next turn.
+        turn_start_anchor = socket.assigns.stt_snapshot_text |> to_string()
+
         socket = socket |> cancel_auto_submit_timer() |> assign(:auto_submit_in_flight, true)
 
         history_before = socket.assigns.conversation_history
@@ -653,6 +711,7 @@ defmodule SttPlaygroundWeb.SttLive do
               socket
               |> assign(:conversation_history, history_with_assistant)
               |> assign(:last_submitted_snapshot, user_turn)
+              |> assign(:turn_start_stt_snapshot_text, turn_start_anchor)
               |> assign(:active_turn_text, "")
               |> assign(:transcript, "")
               |> assign(:last_transcript_change_ms, nil)
@@ -855,7 +914,7 @@ defmodule SttPlaygroundWeb.SttLive do
     if socket.assigns.session_id == sid do
       socket =
         socket
-        |> update_active_turn_text(text)
+        |> update_active_turn_from_stt_snapshot(text)
         |> assign(:status, "recording")
 
       # The current Python worker emits "partial" updates during an active session and only emits
@@ -883,10 +942,15 @@ defmodule SttPlaygroundWeb.SttLive do
 
       socket =
         socket
-        |> update_active_turn_text(text)
+        |> update_active_turn_from_stt_snapshot(text)
         |> assign(:status, "recording")
+
+      final_snapshot = socket.assigns.active_turn_text |> to_string() |> String.trim()
+
+      socket =
+        socket
         |> assign(:last_final_ms, now_ms)
-        |> assign(:final_snapshot, String.trim(text))
+        |> assign(:final_snapshot, final_snapshot)
         |> mark_transcription_caught_up()
 
       {:noreply, maybe_arm_auto_submit_timer(socket)}

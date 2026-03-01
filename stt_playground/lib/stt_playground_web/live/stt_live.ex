@@ -59,103 +59,141 @@ defmodule SttPlaygroundWeb.SttLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="h-screen w-screen p-8 antialiased">
-      <div class="max-w-3xl mx-auto">
-        <h1 class="text-2xl font-semibold mb-2">Port-based Python STT playground</h1>
-        <p class="text-gray-600 mb-2">
-          LiveView -> Elixir GenServer -> Python subprocess (packet-4 framing)
-        </p>
-        <p class="text-sm text-gray-500 mb-3">Status: {@status}</p>
+    <div class="h-screen w-screen bg-gray-50 p-6 antialiased">
+      <div class="mx-auto flex h-full max-w-4xl flex-col gap-4">
+        <header class="flex flex-col gap-2">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 class="text-2xl font-semibold">STT Chat Playground</h1>
+              <p class="text-gray-600">
+                LiveView -> Elixir GenServer -> Python subprocess (packet-4 framing)
+              </p>
+              <p class="text-sm text-gray-500">Status: {@status}</p>
+            </div>
 
-        <div class="mb-6 flex flex-wrap items-center gap-3">
-          <.on_air_indicator enabled={@recording} active={@is_speaking} />
+            <div class="flex items-center gap-2">
+              <button
+                id="mic-toggle"
+                phx-hook="MicStreamer"
+                data-endianness={System.endianness()}
+                data-recording={to_string(@recording)}
+                class={[
+                  "px-4 py-2 rounded text-white",
+                  if(@recording,
+                    do: "bg-red-600 hover:bg-red-700",
+                    else: "bg-blue-600 hover:bg-blue-700"
+                  )
+                ]}
+              >
+                {if @recording, do: "Stop", else: "Start"}
+              </button>
 
-          <.transcribing_indicator :if={@recording && @is_transcribing} label="Still transcribing…" />
-
-          <.auto_submit_countdown_indicator
-            :if={
-              @recording &&
-                !@is_speaking &&
-                !@is_transcribing &&
-                !is_nil(@auto_submit_timer_ref) &&
-                is_integer(@auto_submit_remaining_ms) &&
-                @auto_submit_remaining_ms > 0
-            }
-            remaining_ms={@auto_submit_remaining_ms}
-          />
-
-          <div
-            :if={@recording && @auto_submit_in_flight}
-            id="ai-thinking-indicator"
-            class="inline-flex items-center gap-2 rounded border border-violet-200 bg-violet-50 px-2 py-1 text-sm"
-            role="status"
-            aria-live="polite"
-            aria-label="Thinking"
-          >
-            <.icon name="hero-sparkles" class="size-4 text-violet-700" />
-            <span class="text-violet-800 font-medium">Thinking…</span>
+              <button phx-click="clear" class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">
+                Clear
+              </button>
+            </div>
           </div>
 
-          <div
-            :if={@recording && String.starts_with?(to_string(@tts_status), "speaking")}
-            id="tts-speaking-indicator"
-            class="inline-flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-sm"
-            role="status"
-            aria-live="polite"
-            aria-label="Speaking reply"
-          >
-            <.icon name="hero-speaker-wave" class="size-4 text-emerald-700" />
-            <span class="text-emerald-800 font-medium">Speaking reply…</span>
+          <div class="flex flex-wrap items-center gap-3">
+            <.on_air_indicator enabled={@recording} active={@is_speaking} />
+
+            <.transcribing_indicator :if={@recording && @is_transcribing} label="Still transcribing…" />
+
+            <.auto_submit_countdown_indicator
+              :if={
+                @recording &&
+                  !@is_speaking &&
+                  !@is_transcribing &&
+                  !is_nil(@auto_submit_timer_ref) &&
+                  is_integer(@auto_submit_remaining_ms) &&
+                  @auto_submit_remaining_ms > 0
+              }
+              remaining_ms={@auto_submit_remaining_ms}
+            />
+
+            <div
+              :if={@recording && @auto_submit_in_flight}
+              id="ai-thinking-indicator"
+              class="inline-flex items-center gap-2 rounded border border-violet-200 bg-violet-50 px-2 py-1 text-sm"
+              role="status"
+              aria-live="polite"
+              aria-label="Thinking"
+            >
+              <.icon name="hero-sparkles" class="size-4 text-violet-700" />
+              <span class="text-violet-800 font-medium">Thinking…</span>
+            </div>
+
+            <div
+              :if={@recording && String.starts_with?(to_string(@tts_status), "speaking")}
+              id="tts-speaking-indicator"
+              class="inline-flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-sm"
+              role="status"
+              aria-live="polite"
+              aria-label="Speaking reply"
+            >
+              <.icon name="hero-speaker-wave" class="size-4 text-emerald-700" />
+              <span class="text-emerald-800 font-medium">Speaking reply…</span>
+            </div>
           </div>
-        </div>
+        </header>
 
-        <button
-          id="mic-toggle"
-          phx-hook="MicStreamer"
-          data-endianness={System.endianness()}
-          data-recording={to_string(@recording)}
-          class={[
-            "px-4 py-2 rounded text-white",
-            if(@recording, do: "bg-red-600 hover:bg-red-700", else: "bg-blue-600 hover:bg-blue-700")
-          ]}
-        >
-          {if @recording, do: "Stop", else: "Start"}
-        </button>
-
-        <button phx-click="clear" class="ml-3 px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">
-          Clear
-        </button>
-
-        <div class="mt-6 p-4 border rounded min-h-40 bg-white">
-          <div class="text-sm text-gray-500 mb-2">Transcript</div>
-          <.form for={%{}} phx-change="transcript_change">
-            <textarea
-              name="transcript[text]"
-              rows="6"
-              class="w-full rounded border px-3 py-2"
-              placeholder="Transcript appears here (or paste text for testing)..."
-            ><%= @active_turn_text %></textarea>
-          </.form>
-          <button
-            phx-click="ai_from_transcript"
-            class="mt-3 px-4 py-2 rounded text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50"
-            disabled={String.trim(@active_turn_text) == ""}
-          >
-            Run AI + Speak
-          </button>
-
-          <div :if={@conversation_history != []} class="mt-4">
-            <div class="text-sm text-gray-500 mb-2">Conversation</div>
-            <div class="space-y-2">
-              <div :for={msg <- Enum.take(@conversation_history, -6)} class="text-sm">
-                <span class="font-semibold">{msg.role}:</span>
-                <span>{msg.content}</span>
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded border bg-white shadow-sm">
+          <div class="relative min-h-0 flex-1">
+            <div
+              id="chat-timeline"
+              phx-hook="ChatScroll"
+              class="h-full overflow-y-auto bg-gray-50 p-4"
+            >
+              <div :if={@conversation_history == []} class="py-10 text-center text-sm text-gray-500">
+                No messages yet
               </div>
+
+              <div :for={msg <- @conversation_history} class={if(msg.role == :user, do: "flex justify-end", else: "flex justify-start")}>
+                <div
+                  data-role={to_string(msg.role)}
+                  aria-label={if(msg.role == :user, do: "User message", else: "Assistant message")}
+                  class={[
+                    "mb-2 max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-snug whitespace-pre-wrap break-words",
+                    msg.role == :user && "bg-blue-600 text-white",
+                    msg.role != :user && "border bg-white text-gray-900"
+                  ]}
+                ><%= msg.content %></div>
+              </div>
+            </div>
+
+            <button
+              id="chat-jump-to-latest"
+              type="button"
+              class="hidden absolute bottom-4 right-4 rounded-full border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              Jump to latest
+            </button>
+          </div>
+
+          <div class="border-t bg-white p-3">
+            <.form for={%{}} phx-change="transcript_change">
+              <textarea
+                id="chat-composer-textarea"
+                name="transcript[text]"
+                rows="3"
+                class="w-full rounded border px-3 py-2"
+                placeholder="Speak or type your message..."
+              ><%= @active_turn_text %></textarea>
+            </.form>
+
+            <div class="mt-2 flex items-center justify-end">
+              <button
+                phx-click="ai_from_transcript"
+                class="px-4 py-2 rounded text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50"
+                disabled={String.trim(@active_turn_text) == ""}
+              >
+                Send (AI + Speak)
+              </button>
             </div>
           </div>
         </div>
 
-        <div class="mt-6 p-4 border rounded bg-white">
+        <div class="rounded border bg-white p-4">
           <div class="text-sm text-gray-500 mb-2">Text-to-speech (KittenTTS stream)</div>
           <.form for={%{}} phx-change="tts_change" phx-submit="speak_text">
             <textarea
@@ -695,12 +733,25 @@ defmodule SttPlaygroundWeb.SttLive do
         # If STT snapshots are cumulative for the session, this becomes the anchor for the next turn.
         turn_start_anchor = socket.assigns.stt_snapshot_text |> to_string()
 
-        socket = socket |> cancel_auto_submit_timer() |> assign(:auto_submit_in_flight, true)
-
         history_before = socket.assigns.conversation_history
         history_with_user = history_before ++ [%{role: :user, content: user_turn, source: source}]
 
         prompt = build_history_prompt(history_before, user_turn, max_messages)
+
+        # UX: in a chat UI, the user's message should appear as soon as it is submitted,
+        # even if the assistant generation fails.
+        socket =
+          socket
+          |> cancel_auto_submit_timer()
+          |> assign(:auto_submit_in_flight, true)
+          |> assign(:conversation_history, history_with_user)
+          |> assign(:last_submitted_snapshot, user_turn)
+          |> assign(:turn_start_stt_snapshot_text, turn_start_anchor)
+          |> assign(:active_turn_text, "")
+          |> assign(:transcript, "")
+          |> assign(:last_transcript_change_ms, nil)
+          |> assign(:last_final_ms, nil)
+          |> assign(:final_snapshot, nil)
 
         case transform_text_with_dspy(prompt) do
           {:ok, ai_output, answer_outcome} ->
@@ -710,13 +761,6 @@ defmodule SttPlaygroundWeb.SttLive do
             socket =
               socket
               |> assign(:conversation_history, history_with_assistant)
-              |> assign(:last_submitted_snapshot, user_turn)
-              |> assign(:turn_start_stt_snapshot_text, turn_start_anchor)
-              |> assign(:active_turn_text, "")
-              |> assign(:transcript, "")
-              |> assign(:last_transcript_change_ms, nil)
-              |> assign(:last_final_ms, nil)
-              |> assign(:final_snapshot, nil)
               |> assign(:tts_answer_status, Atom.to_string(answer_outcome))
 
             case start_tts_session_and_speak(ai_output) do

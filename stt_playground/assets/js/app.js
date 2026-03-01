@@ -230,6 +230,51 @@ const hooks = {
       }
       return btoa(binary)
     }
+  },
+
+  ChatScroll: {
+    mounted() {
+      this.atBottom = true
+      this.jumpButton = document.getElementById("chat-jump-to-latest")
+
+      this.onScroll = () => {
+        const threshold = 80
+        const distanceFromBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight
+        this.atBottom = distanceFromBottom < threshold
+
+        if (this.jumpButton) {
+          this.jumpButton.classList.toggle("hidden", this.atBottom)
+        }
+      }
+
+      this.el.addEventListener("scroll", this.onScroll)
+
+      if (this.jumpButton) {
+        this.jumpButton.addEventListener("click", () => {
+          this.scrollToBottom()
+          this.atBottom = true
+          this.jumpButton.classList.add("hidden")
+        })
+      }
+
+      this.scrollToBottom()
+    },
+
+    updated() {
+      if (this.atBottom) {
+        this.scrollToBottom()
+      }
+    },
+
+    destroyed() {
+      if (this.onScroll) {
+        this.el.removeEventListener("scroll", this.onScroll)
+      }
+    },
+
+    scrollToBottom() {
+      this.el.scrollTop = this.el.scrollHeight
+    }
   }
 }
 

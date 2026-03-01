@@ -505,7 +505,10 @@ defmodule SttPlaygroundWeb.SttLiveTest do
                  "error: AI response format was invalid after retry"
                )
 
-        assert current_assign(view, :conversation_history) == []
+        history = current_assign(view, :conversation_history)
+        assert length(history) == 1
+        assert Enum.at(history, 0).role == :user
+        assert Enum.at(history, 0).content == "Tell me a joke"
       end)
     end)
   end
@@ -584,6 +587,63 @@ defmodule SttPlaygroundWeb.SttLiveTest do
         assert Enum.at(history, 0).content == "No final"
       end
     )
+  end
+
+  test "renders chat timeline empty state on first load", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    html = render(view)
+    assert html =~ "id=\"chat-timeline\""
+    assert html =~ "No messages yet"
+    assert html =~ "id=\"chat-composer-textarea\""
+  end
+
+  test "renders user and assistant messages in chat timeline with role labels", %{conn: conn} do
+    with_voice_auto_submit_env([enabled: false], fn ->
+      {:ok, view, _html} = live(conn, "/")
+
+      render_change(view, "transcript_change", %{"transcript" => %{"text" => "Hello"}})
+      render_click(view, "ai_from_transcript", %{})
+
+      assert_receive {:fake_responder_called, _text}, 500
+
+      html = render(view)
+      assert html =~ "id=\"chat-timeline\""
+      assert html =~ "data-role=\"user\""
+      assert html =~ "data-role=\"assistant\""
+      assert html =~ "aria-label=\"User message\""
+      assert html =~ "aria-label=\"Assistant message\""
+      assert html =~ "Hello"
+      assert html =~ "fake-ai"
+    end)
+  end
+
+  test "composer shows active turn text and editing updates it", %{conn: conn} do
+    with_voice_auto_submit_env([enabled: false], fn ->
+      {:ok, view, _html} = live(conn, "/")
+      render_hook(view, "start_stream", %{})
+      sid = current_session_id(view)
+
+      send(
+        view.pid,
+        {:stt_event, %{"event" => "partial", "session_id" => sid, "text" => "hello"}}
+      )
+
+      html = render(view)
+      assert html =~ "id=\"chat-composer-textarea\""
+      assert html =~ "hello"
+
+      render_change(view, "transcript_change", %{"transcript" => %{"text" => "edited"}})
+      assert current_assign(view, :active_turn_text) == "edited"
+    end)
+  end
+
+  test "chat timeline includes scroll hook and jump-to-latest control", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    html = render(view)
+    assert html =~ "phx-hook=\"ChatScroll\""
+    assert html =~ "id=\"chat-jump-to-latest\""
   end
 
   defp pcm_chunk_b64(amplitude, samples \\ 2048) when is_number(amplitude) do

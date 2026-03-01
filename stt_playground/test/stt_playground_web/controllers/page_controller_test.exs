@@ -3,6 +3,6 @@ defmodule SttPlaygroundWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Port-based Python STT playground"
+    assert html_response(conn, 200) =~ "STT Chat Playground"
   end
 end

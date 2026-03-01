@@ -18,7 +18,10 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:tts_status, "idle")
      |> assign(:tts_session_id, nil)
      |> assign(:speech_activity_state, speech_activity_initial_state())
-     |> assign(:is_speaking, false)}
+     |> assign(:is_speaking, false)
+     |> assign(:stt_audio_gating, stt_audio_gating_config())
+     |> assign(:stt_pre_roll, :queue.new())
+     |> assign(:stt_pre_roll_size, 0)}
   end
 
   @impl true
@@ -177,6 +180,7 @@ defmodule SttPlaygroundWeb.SttLive do
 
       {:noreply,
        socket
+       |> reset_stt_audio_gating()
        |> assign(:recording, true)
        |> assign(:status, "recording")
        |> assign(:session_id, session_id)
@@ -187,11 +191,12 @@ defmodule SttPlaygroundWeb.SttLive do
 
   @impl true
   def handle_event("audio_chunk", %{"pcm_b64" => pcm_b64}, socket) do
-    if session_id = socket.assigns.session_id do
-      SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
-    end
+    prev_is_speaking = socket.assigns.is_speaking
 
-    {:noreply, update_speaking_from_pcm(socket, pcm_b64)}
+    socket = update_speaking_from_pcm(socket, pcm_b64)
+    socket = maybe_forward_stt_audio_chunk(socket, pcm_b64, prev_is_speaking)
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -292,6 +297,103 @@ defmodule SttPlaygroundWeb.SttLive do
     SpeechActivityState.new(opts)
   end
 
+  defp stt_audio_gating_config do
+    opts = Application.get_env(:stt_playground, :stt_audio_gating, [])
+
+    pre_roll_max_chunks =
+      opts
+      |> Keyword.get(:pre_roll_max_chunks, 12)
+      |> max(0)
+
+    %{
+      enabled: Keyword.get(opts, :enabled, true),
+      pre_roll_max_chunks: pre_roll_max_chunks
+    }
+  end
+
+  defp reset_stt_audio_gating(socket) do
+    socket
+    |> assign(:stt_pre_roll, :queue.new())
+    |> assign(:stt_pre_roll_size, 0)
+  end
+
+  defp maybe_forward_stt_audio_chunk(socket, pcm_b64, prev_is_speaking) do
+    session_id = socket.assigns.session_id
+    config = socket.assigns.stt_audio_gating
+
+    cond do
+      socket.assigns.recording != true ->
+        socket
+
+      is_nil(session_id) ->
+        socket
+
+      config[:enabled] != true ->
+        SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
+        emit_audio_gating([:chunk, :forwarded], %{count: 1}, %{reason: :gating_disabled})
+        socket
+
+      socket.assigns.is_speaking == true ->
+        socket =
+          if prev_is_speaking do
+            socket
+          else
+            flush_pre_roll(socket, session_id)
+          end
+
+        SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
+        emit_audio_gating([:chunk, :forwarded], %{count: 1}, %{})
+        socket
+
+      true ->
+        socket = buffer_pre_roll(socket, pcm_b64)
+        emit_audio_gating([:chunk, :dropped], %{count: 1}, %{})
+        socket
+    end
+  end
+
+  defp buffer_pre_roll(socket, pcm_b64) do
+    max_chunks = socket.assigns.stt_audio_gating[:pre_roll_max_chunks]
+    queue = socket.assigns.stt_pre_roll
+    size = socket.assigns.stt_pre_roll_size
+
+    {queue, size} =
+      cond do
+        max_chunks <= 0 ->
+          {:queue.new(), 0}
+
+        size < max_chunks ->
+          {:queue.in(pcm_b64, queue), size + 1}
+
+        true ->
+          {_dropped, queue_after_drop} = :queue.out(queue)
+          {:queue.in(pcm_b64, queue_after_drop), size}
+      end
+
+    socket
+    |> assign(:stt_pre_roll, queue)
+    |> assign(:stt_pre_roll_size, size)
+  end
+
+  defp flush_pre_roll(socket, session_id) do
+    queue = socket.assigns.stt_pre_roll
+    chunks = :queue.to_list(queue)
+
+    Enum.each(chunks, fn chunk ->
+      SttPlayground.STT.PythonPort.push_chunk(session_id, chunk)
+    end)
+
+    if chunks != [] do
+      emit_audio_gating([:pre_roll, :flushed], %{count: length(chunks)}, %{})
+    end
+
+    reset_stt_audio_gating(socket)
+  end
+
+  defp emit_audio_gating(event_suffix, measurements, metadata) do
+    :telemetry.execute([:stt_playground, :stt, :audio_gating] ++ event_suffix, measurements, metadata)
+  end
+
   defp update_speaking_from_pcm(socket, pcm_b64) do
     with {:ok, pcm} <- Base.decode64(pcm_b64),
          rms <- SpeechActivityState.rms_from_pcm_f32(pcm, :native) do
@@ -321,6 +423,7 @@ defmodule SttPlaygroundWeb.SttLive do
     socket
     |> assign(:speech_activity_state, speech_state)
     |> assign(:is_speaking, speech_state.is_speaking)
+    |> reset_stt_audio_gating()
   end
 
   @impl true

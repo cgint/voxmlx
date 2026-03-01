@@ -1,0 +1,37 @@
+direction: down
+
+browser: **Browser mic capture**
+- AudioWorklet
+- emits PCM float32 chunks
+
+live: **LiveView (SttLive)**
+- receives `audio_chunk`
+
+state: **SpeechActivityState**
+- RMS energy
+- hysteresis (minSpeak/minSilence)
+- output: `isSpeaking`
+
+buffer: **Pre-roll buffer**
+- bounded recent chunks
+
+gate: **Chunk gating**
+
+port: **PythonPort (GenServer)**
+
+worker: **Python STT worker**
+- partial loop
+- final on stop
+
+browser -> live: `audio_chunk(pcm_b64)`
+live -> state: compute RMS + ingest
+state -> gate: `isSpeaking`
+
+live -> buffer: store chunk while not speaking
+buffer -> gate: flush on speech start
+
+live -> port: forward chunk(s)
+port -> worker: `audio_chunk`
+
+# Control flow
+live -> port: start_session / stop_session

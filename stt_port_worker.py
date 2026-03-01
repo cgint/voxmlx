@@ -88,6 +88,7 @@ def transcribe_pcm_bytes(pcm_bytes: bytes) -> str:
             n_delay_tokens=n_delay_tokens,
             temperature=TEMPERATURE,
             eos_token_id=sp.eos_id,
+            stop_on_eos=False,
         )
         return sp.decode(output_tokens, special_token_policy=SpecialTokenPolicy.IGNORE).strip()
     finally:

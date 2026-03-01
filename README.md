@@ -78,6 +78,18 @@ voxmlx
 voxmlx --audio audio.flac
 ```
 
+**Write transcript to a file while decoding (so you can `tail -f` it):**
+
+```bash
+voxmlx --audio audio.flac --output transcript.txt --stream-output --no-stdout
+```
+
+**Chunk long files (recommended):**
+
+```bash
+voxmlx --audio big.mp3 --chunk-seconds 30 --chunk-overlap-seconds 1 --output transcript.txt --stream-output --no-stdout
+```
+
 **Options:**
 
 | Flag | Description | Default |
@@ -85,6 +97,12 @@ voxmlx --audio audio.flac
 | `--audio` | Path to audio file (omit to stream from mic) | None |
 | `--model` | Model path or HuggingFace model ID | `mlx-community/Voxtral-Mini-4B-Realtime-6bit` |
 | `--temp` | Sampling temperature (`0` = greedy) | `0.0` |
+| `--chunk-seconds` | Chunk size in seconds for file transcription (streaming models default to 120s) | None |
+| `--chunk-overlap-seconds` | Chunk overlap in seconds for file transcription | `2.0` |
+| `--output` | Write transcript to file | None |
+| `--stream-output` | Stream transcript to `--output` while decoding | Off |
+| `--no-stdout` | Do not print transcript to stdout | Off |
+| `--stop-on-eos` | Stop decoding at the first EOS token (legacy behavior) | Off |
 
 ### `voxmlx-convert`
 

@@ -452,6 +452,26 @@ defmodule SttPlaygroundWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders a transcribing indicator while the app is still processing speech into text.
+  """
+  attr :label, :string, default: "Transcribing…"
+
+  def transcribing_indicator(assigns) do
+    ~H"""
+    <div
+      id="transcribing-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label="Transcribing"
+      class="inline-flex items-center gap-2 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-sm"
+    >
+      <.icon name="hero-arrow-path" class="size-4 text-gray-500 motion-safe:animate-spin" />
+      <span class="text-gray-700 font-medium">{@label}</span>
+    </div>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do

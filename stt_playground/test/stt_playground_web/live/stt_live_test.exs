@@ -86,6 +86,32 @@ defmodule SttPlaygroundWeb.SttLiveTest do
     assert html_after_error =~ "Status: error: boom"
   end
 
+  test "shows transcribing indicator after speech ends until transcript update arrives", %{conn: conn} do
+    with_speech_activity_env([min_speak_ms: 0, min_silence_ms: 0], fn ->
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "start_stream", %{})
+      sid = current_session_id(view)
+
+      loud = pcm_chunk_b64(0.10)
+      silence = pcm_chunk_b64(0.0)
+
+      render_hook(view, "audio_chunk", %{"pcm_b64" => loud})
+      render_hook(view, "audio_chunk", %{"pcm_b64" => silence})
+
+      html_transcribing = render(view)
+      assert html_transcribing =~ "Transcribing"
+      assert html_transcribing =~ "aria-label=\"Transcribing\""
+
+      # In the real worker, "final" is only emitted on stop; during an active session we should
+      # clear the indicator once we get the post-speech transcript update.
+      send(view.pid, {:stt_event, %{"event" => "partial", "session_id" => sid, "text" => "done"}})
+
+      html_after_partial = render(view)
+      refute html_after_partial =~ "aria-label=\"Transcribing\""
+    end)
+  end
+
   test "drops silent chunks while not speaking and flushes pre-roll on speech start", %{conn: conn} do
     with_speech_activity_env([min_speak_ms: 0, min_silence_ms: 0], fn ->
       {:ok, view, _html} = live(conn, "/")

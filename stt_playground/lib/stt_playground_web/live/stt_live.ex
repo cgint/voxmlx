@@ -6,6 +6,8 @@ defmodule SttPlaygroundWeb.SttLive do
 
   @default_dspy_module SttPlayground.AI.DSPyResponder
 
+  @transcribing_fallback_ms 12_000
+
   @impl true
   def mount(_params, _session, socket) do
     {:ok,
@@ -19,6 +21,9 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:tts_session_id, nil)
      |> assign(:speech_activity_state, speech_activity_initial_state())
      |> assign(:is_speaking, false)
+     |> assign(:is_transcribing, false)
+     |> assign(:stt_audio_forwarded_since_last_final, false)
+     |> assign(:transcribing_fallback_timer_ref, nil)
      |> assign(:stt_audio_gating, stt_audio_gating_config())
      |> assign(:stt_pre_roll, :queue.new())
      |> assign(:stt_pre_roll_size, 0)}
@@ -35,8 +40,9 @@ defmodule SttPlaygroundWeb.SttLive do
         </p>
         <p class="text-sm text-gray-500 mb-3">Status: {@status}</p>
 
-        <div class="mb-6">
+        <div class="mb-6 flex items-center gap-3">
           <.on_air_indicator enabled={@recording} active={@is_speaking} />
+          <.transcribing_indicator :if={@recording && @is_transcribing} />
         </div>
 
         <button
@@ -181,6 +187,7 @@ defmodule SttPlaygroundWeb.SttLive do
       {:noreply,
        socket
        |> reset_stt_audio_gating()
+       |> mark_transcription_caught_up()
        |> assign(:recording, true)
        |> assign(:status, "recording")
        |> assign(:session_id, session_id)
@@ -195,6 +202,23 @@ defmodule SttPlaygroundWeb.SttLive do
 
     socket = update_speaking_from_pcm(socket, pcm_b64)
     socket = maybe_forward_stt_audio_chunk(socket, pcm_b64, prev_is_speaking)
+
+    socket =
+      cond do
+        prev_is_speaking == false and socket.assigns.is_speaking == true ->
+          # When user starts speaking again, hide any previous "transcribing" state.
+          stop_transcribing_indicator(socket)
+
+        prev_is_speaking == true and socket.assigns.is_speaking == false and
+            socket.assigns.stt_audio_forwarded_since_last_final == true ->
+          # User stopped speaking, but we have forwarded audio that may still be processed.
+          socket
+          |> assign(:is_transcribing, true)
+          |> schedule_transcribing_fallback_clear()
+
+        true ->
+          socket
+      end
 
     {:noreply, socket}
   end
@@ -317,6 +341,44 @@ defmodule SttPlaygroundWeb.SttLive do
     |> assign(:stt_pre_roll_size, 0)
   end
 
+  defp stop_transcribing_indicator(socket) do
+    socket
+    |> cancel_transcribing_fallback_timer()
+    |> assign(:is_transcribing, false)
+  end
+
+  defp mark_transcription_caught_up(socket) do
+    socket
+    |> stop_transcribing_indicator()
+    |> assign(:stt_audio_forwarded_since_last_final, false)
+  end
+
+  defp schedule_transcribing_fallback_clear(socket) do
+    socket = cancel_transcribing_fallback_timer(socket)
+
+    if socket.assigns.recording == true and socket.assigns.is_transcribing == true and
+         is_binary(socket.assigns.session_id) do
+      ref =
+        Process.send_after(
+          self(),
+          {:transcribing_fallback_timeout, socket.assigns.session_id},
+          @transcribing_fallback_ms
+        )
+
+      assign(socket, :transcribing_fallback_timer_ref, ref)
+    else
+      socket
+    end
+  end
+
+  defp cancel_transcribing_fallback_timer(socket) do
+    if ref = socket.assigns.transcribing_fallback_timer_ref do
+      Process.cancel_timer(ref)
+    end
+
+    assign(socket, :transcribing_fallback_timer_ref, nil)
+  end
+
   defp maybe_forward_stt_audio_chunk(socket, pcm_b64, prev_is_speaking) do
     session_id = socket.assigns.session_id
     config = socket.assigns.stt_audio_gating
@@ -331,7 +393,7 @@ defmodule SttPlaygroundWeb.SttLive do
       config[:enabled] != true ->
         SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
         emit_audio_gating([:chunk, :forwarded], %{count: 1}, %{reason: :gating_disabled})
-        socket
+        assign(socket, :stt_audio_forwarded_since_last_final, true)
 
       socket.assigns.is_speaking == true ->
         socket =
@@ -343,7 +405,7 @@ defmodule SttPlaygroundWeb.SttLive do
 
         SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
         emit_audio_gating([:chunk, :forwarded], %{count: 1}, %{})
-        socket
+        assign(socket, :stt_audio_forwarded_since_last_final, true)
 
       true ->
         socket = buffer_pre_roll(socket, pcm_b64)
@@ -423,6 +485,7 @@ defmodule SttPlaygroundWeb.SttLive do
     socket
     |> assign(:speech_activity_state, speech_state)
     |> assign(:is_speaking, speech_state.is_speaking)
+    |> mark_transcription_caught_up()
     |> reset_stt_audio_gating()
   end
 
@@ -432,7 +495,19 @@ defmodule SttPlaygroundWeb.SttLive do
         socket
       ) do
     if socket.assigns.session_id == sid do
-      {:noreply, socket |> assign(:transcript, text) |> assign(:status, "recording")}
+      socket = socket |> assign(:transcript, text) |> assign(:status, "recording")
+
+      # The current Python worker emits "partial" updates during an active session and only emits
+      # a "final" when the session is explicitly stopped. To avoid a stuck indicator, treat the
+      # first post-speech transcript update as "caught up" for UI purposes.
+      socket =
+        if socket.assigns.is_transcribing do
+          mark_transcription_caught_up(socket)
+        else
+          socket
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -445,9 +520,9 @@ defmodule SttPlaygroundWeb.SttLive do
     if socket.assigns.session_id == sid do
       {:noreply,
        socket
-       |> disable_speech_activity()
        |> assign(:transcript, text)
-       |> assign(:status, "recording")}
+       |> assign(:status, "recording")
+       |> mark_transcription_caught_up()}
     else
       {:noreply, socket}
     end
@@ -460,6 +535,17 @@ defmodule SttPlaygroundWeb.SttLive do
       ) do
     {:noreply,
      assign(socket, :status, "recording (overload: q=#{depth}, dropped=#{dropped_count})")}
+  end
+
+  def handle_info({:transcribing_fallback_timeout, sid}, socket) do
+    socket = cancel_transcribing_fallback_timer(socket)
+
+    if socket.assigns.session_id == sid and socket.assigns.is_transcribing == true and
+         socket.assigns.is_speaking == false do
+      {:noreply, mark_transcription_caught_up(socket)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:stt_event, %{"event" => "error", "message" => msg}}, socket) do

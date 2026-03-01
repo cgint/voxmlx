@@ -1,0 +1,20 @@
+direction: down
+
+transcribing: **Transcription processing state** {
+  recording_off: Recording OFF\n`recording=false`\n`isTranscribing=false`
+  recording_on: Recording ON\n`recording=true`
+
+  speaking: Speaking\n`isSpeaking=true`
+  waiting: Waiting for transcript\n`isSpeaking=false`\n`isTranscribing=true`
+  idle: Caught up\n`isSpeaking=false`\n`isTranscribing=false`
+}
+
+recording_off -> recording_on: Start recording
+recording_on -> recording_off: Stop recording / error
+
+recording_on -> speaking: Speech starts
+speaking -> waiting: Speech ends (debounced)
+waiting -> idle: STT `final` received
+idle -> speaking: Speech starts
+
+waiting -> speaking: Speech starts again

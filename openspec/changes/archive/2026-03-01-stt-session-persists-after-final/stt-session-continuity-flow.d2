@@ -1,0 +1,32 @@
+direction: down
+
+mic: {
+  label: "**MicStreamer**\nSends start/audio/stop"
+  style.fill: "#E8F0FE"
+}
+
+live: {
+  label: "**SttLive**\nOwns session_id + recording"
+  style.fill: "#FFF3E0"
+}
+
+worker: {
+  label: "**STT Worker**\nEmits partial/final/error"
+  style.fill: "#E8F5E9"
+}
+
+final_note: {
+  label: "**Rule**\nfinal updates transcript\nbut does NOT end session"
+  style.fill: "#F3E5F5"
+}
+
+stop_note: {
+  label: "**Stop conditions**\nexplicit stop or error only"
+  style.fill: "#FFEBEE"
+}
+
+mic -> live: start_stream / audio_chunk / stop_stream
+live -> worker: start_session / push_chunk / stop_session
+worker -> live: partial / final / error
+worker -> final_note
+live -> stop_note

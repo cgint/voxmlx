@@ -1,8 +1,5 @@
-# on-air-indicator-ui Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change on-air-indicator. Update Purpose after archive.
-## Requirements
 ### Requirement: On Air indicator reflects speech activity while STT is enabled
 When STT is enabled, the UI SHALL display an “On Air” indicator that reflects the current speaking state.
 
@@ -21,18 +18,3 @@ A `final` STT event SHALL NOT, by itself, disable STT indicator enablement while
 #### Scenario: Final event does not disable indicator enablement
 - **WHEN** STT is enabled and the app receives a `final` event for the active session
 - **THEN** indicator enablement remains tied to `recording == true` rather than being implicitly disabled by `final`
-
-### Requirement: Indicator is not active when STT is disabled
-When STT is disabled, the UI SHALL NOT show an active “On Air” state.
-
-#### Scenario: STT disabled
-- **WHEN** STT is disabled (`recording == false`)
-- **THEN** the indicator is still rendered with text “On Air” and an inactive/gray visual state
-
-### Requirement: Indicator is accessible
-The indicator SHALL provide an accessible label that communicates whether it is active.
-
-#### Scenario: Screen reader announces state
-- **WHEN** the indicator is focused or announced by assistive technology
-- **THEN** it includes a label that conveys “On Air” and whether speech is currently detected
-

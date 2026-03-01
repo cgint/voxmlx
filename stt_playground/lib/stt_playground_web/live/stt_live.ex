@@ -344,9 +344,7 @@ defmodule SttPlaygroundWeb.SttLive do
        socket
        |> disable_speech_activity()
        |> assign(:transcript, text)
-       |> assign(:status, "done")
-       |> assign(:session_id, nil)
-       |> assign(:recording, false)}
+       |> assign(:status, "recording")}
     else
       {:noreply, socket}
     end

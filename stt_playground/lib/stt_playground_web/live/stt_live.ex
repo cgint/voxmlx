@@ -15,6 +15,21 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:recording, false)
      |> assign(:status, "idle")
      |> assign(:session_id, nil)
+     # Turn-based conversation state
+     |> assign(:active_turn_text, "")
+     |> assign(:conversation_history, [])
+     |> assign(:last_transcript_change_ms, nil)
+     |> assign(:last_final_ms, nil)
+     |> assign(:final_snapshot, nil)
+     |> assign(:last_submitted_snapshot, nil)
+     |> assign(:auto_submit_in_flight, false)
+     |> assign(:auto_submit_timer_ref, nil)
+     |> assign(:auto_submit_tick_ref, nil)
+     |> assign(:auto_submit_deadline_ms, nil)
+     |> assign(:auto_submit_remaining_ms, nil)
+     |> assign(:auto_submit_token, 0)
+     |> assign(:voice_turn_auto_submit, voice_turn_auto_submit_config())
+     # Backwards-compatible UI field (currently mirrors active_turn_text)
      |> assign(:transcript, "")
      |> assign(:tts_text, "")
      |> assign(:tts_status, "idle")
@@ -40,9 +55,46 @@ defmodule SttPlaygroundWeb.SttLive do
         </p>
         <p class="text-sm text-gray-500 mb-3">Status: {@status}</p>
 
-        <div class="mb-6 flex items-center gap-3">
+        <div class="mb-6 flex flex-wrap items-center gap-3">
           <.on_air_indicator enabled={@recording} active={@is_speaking} />
-          <.transcribing_indicator :if={@recording && @is_transcribing} />
+
+          <.transcribing_indicator :if={@recording && @is_transcribing} label="Still transcribing…" />
+
+          <.auto_submit_countdown_indicator
+            :if={
+              @recording &&
+                !@is_speaking &&
+                !@is_transcribing &&
+                !is_nil(@auto_submit_timer_ref) &&
+                is_integer(@auto_submit_remaining_ms) &&
+                @auto_submit_remaining_ms > 0
+            }
+            remaining_ms={@auto_submit_remaining_ms}
+          />
+
+          <div
+            :if={@recording && @auto_submit_in_flight}
+            id="ai-thinking-indicator"
+            class="inline-flex items-center gap-2 rounded border border-violet-200 bg-violet-50 px-2 py-1 text-sm"
+            role="status"
+            aria-live="polite"
+            aria-label="Thinking"
+          >
+            <.icon name="hero-sparkles" class="size-4 text-violet-700" />
+            <span class="text-violet-800 font-medium">Thinking…</span>
+          </div>
+
+          <div
+            :if={@recording && String.starts_with?(to_string(@tts_status), "speaking")}
+            id="tts-speaking-indicator"
+            class="inline-flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-sm"
+            role="status"
+            aria-live="polite"
+            aria-label="Speaking reply"
+          >
+            <.icon name="hero-speaker-wave" class="size-4 text-emerald-700" />
+            <span class="text-emerald-800 font-medium">Speaking reply…</span>
+          </div>
         </div>
 
         <button
@@ -70,15 +122,25 @@ defmodule SttPlaygroundWeb.SttLive do
               rows="6"
               class="w-full rounded border px-3 py-2"
               placeholder="Transcript appears here (or paste text for testing)..."
-            ><%= @transcript %></textarea>
+            ><%= @active_turn_text %></textarea>
           </.form>
           <button
             phx-click="ai_from_transcript"
             class="mt-3 px-4 py-2 rounded text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50"
-            disabled={String.trim(@transcript) == ""}
+            disabled={String.trim(@active_turn_text) == ""}
           >
             Run AI + Speak
           </button>
+
+          <div :if={@conversation_history != []} class="mt-4">
+            <div class="text-sm text-gray-500 mb-2">Conversation</div>
+            <div class="space-y-2">
+              <div :for={msg <- Enum.take(@conversation_history, -6)} class="text-sm">
+                <span class="font-semibold">{msg.role}:</span>
+                <span>{msg.content}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="mt-6 p-4 border rounded bg-white">
@@ -108,7 +170,19 @@ defmodule SttPlaygroundWeb.SttLive do
   end
 
   @impl true
-  def handle_event("clear", _params, socket), do: {:noreply, assign(socket, :transcript, "")}
+  def handle_event("clear", _params, socket) do
+    {:noreply,
+     socket
+     |> cancel_auto_submit_timer()
+     |> assign(:active_turn_text, "")
+     |> assign(:transcript, "")
+     |> assign(:conversation_history, [])
+     |> assign(:last_transcript_change_ms, nil)
+     |> assign(:last_final_ms, nil)
+     |> assign(:final_snapshot, nil)
+     |> assign(:last_submitted_snapshot, nil)
+     |> assign(:auto_submit_in_flight, false)}
+  end
 
   @impl true
   def handle_event("tts_change", %{"tts" => %{"text" => text}}, socket) do
@@ -117,7 +191,8 @@ defmodule SttPlaygroundWeb.SttLive do
 
   @impl true
   def handle_event("transcript_change", %{"transcript" => %{"text" => text}}, socket) do
-    {:noreply, assign(socket, :transcript, text)}
+    socket = update_active_turn_text(socket, text)
+    {:noreply, maybe_arm_auto_submit_timer(socket)}
   end
 
   @impl true
@@ -144,29 +219,12 @@ defmodule SttPlaygroundWeb.SttLive do
 
   @impl true
   def handle_event("ai_from_transcript", _params, socket) do
-    transcript = String.trim(socket.assigns.transcript)
+    case submit_active_turn(socket, :manual) do
+      {:ok, socket} ->
+        {:noreply, socket}
 
-    if transcript == "" do
-      {:noreply, assign(socket, :tts_status, "error: transcript is empty")}
-    else
-      case transform_text_with_dspy(transcript) do
-        {:ok, ai_output, ai_status} ->
-          case start_tts_session_and_speak(ai_output) do
-            {:ok, session_id, spoken_text} ->
-              {:noreply,
-               socket
-               |> assign(:tts_text, spoken_text)
-               |> assign(:tts_status, ai_status)
-               |> assign(:tts_session_id, session_id)
-               |> push_event("tts_stream_start", %{"session_id" => session_id})}
-
-            {:error, message} ->
-              {:noreply, assign(socket, :tts_status, "error: #{message}")}
-          end
-
-        {:error, message} ->
-          {:noreply, assign(socket, :tts_status, "error: #{message}")}
-      end
+      {:error, socket, message} ->
+        {:noreply, assign(socket, :tts_status, "error: #{message}")}
     end
   end
 
@@ -205,19 +263,29 @@ defmodule SttPlaygroundWeb.SttLive do
 
     socket =
       cond do
-        prev_is_speaking == false and socket.assigns.is_speaking == true ->
-          # When user starts speaking again, hide any previous "transcribing" state.
-          stop_transcribing_indicator(socket)
+        socket.assigns.is_speaking == true ->
+          # Any speaking should immediately cancel pending auto-submit countdown.
+          socket
+          |> cancel_auto_submit_timer()
+          |> stop_transcribing_indicator()
 
         prev_is_speaking == true and socket.assigns.is_speaking == false and
             socket.assigns.stt_audio_forwarded_since_last_final == true ->
           # User stopped speaking, but we have forwarded audio that may still be processed.
           socket
+          |> cancel_auto_submit_timer()
           |> assign(:is_transcribing, true)
           |> schedule_transcribing_fallback_clear()
 
         true ->
           socket
+      end
+
+    socket =
+      if prev_is_speaking == true and socket.assigns.is_speaking == false do
+        maybe_arm_auto_submit_timer(socket)
+      else
+        socket
       end
 
     {:noreply, socket}
@@ -290,7 +358,7 @@ defmodule SttPlaygroundWeb.SttLive do
 
     case result do
       {:ok, output} when is_binary(output) and output != "" ->
-        {:ok, output, "speaking (DSPy)"}
+        {:ok, output, "ai ok (DSPy)"}
 
       {:ok, _} ->
         {:error, "DSPy returned empty output"}
@@ -306,10 +374,12 @@ defmodule SttPlaygroundWeb.SttLive do
   end
 
   defp start_tts_session_and_speak(text) do
-    if Process.whereis(SttPlayground.TTS.PythonPort) do
+    tts_mod = tts_port_module()
+
+    if Process.whereis(tts_mod) do
       session_id = Integer.to_string(System.unique_integer([:positive]))
-      :ok = SttPlayground.TTS.PythonPort.start_session(session_id, self())
-      SttPlayground.TTS.PythonPort.speak_text(session_id, text)
+      :ok = tts_mod.start_session(session_id, self())
+      tts_mod.speak_text(session_id, text)
       {:ok, session_id, text}
     else
       {:error, "tts worker not running"}
@@ -333,6 +403,203 @@ defmodule SttPlaygroundWeb.SttLive do
       enabled: Keyword.get(opts, :enabled, true),
       pre_roll_max_chunks: pre_roll_max_chunks
     }
+  end
+
+  defp voice_turn_auto_submit_config do
+    opts = Application.get_env(:stt_playground, :voice_turn_auto_submit, [])
+
+    %{
+      enabled: Keyword.get(opts, :enabled, true),
+      min_pause_after_final_ms: Keyword.get(opts, :min_pause_after_final_ms, 3_000),
+      fallback_stable_without_final_ms:
+        Keyword.get(opts, :fallback_stable_without_final_ms, 3_000),
+      history_max_messages: Keyword.get(opts, :history_max_messages, 12)
+    }
+  end
+
+  defp tts_port_module do
+    Application.get_env(:stt_playground, :tts_port_module, SttPlayground.TTS.PythonPort)
+  end
+
+  defp update_active_turn_text(socket, text) when is_binary(text) do
+    prev = socket.assigns.active_turn_text
+
+    if prev == text do
+      socket
+    else
+      now_ms = System.monotonic_time(:millisecond)
+
+      socket
+      |> assign(:active_turn_text, text)
+      |> assign(:transcript, text)
+      |> assign(:last_transcript_change_ms, now_ms)
+      |> assign(:last_final_ms, nil)
+      |> assign(:final_snapshot, nil)
+    end
+  end
+
+  defp cancel_auto_submit_timer(socket) do
+    if ref = socket.assigns.auto_submit_timer_ref do
+      Process.cancel_timer(ref)
+    end
+
+    if ref = socket.assigns.auto_submit_tick_ref do
+      Process.cancel_timer(ref)
+    end
+
+    socket
+    |> assign(:auto_submit_timer_ref, nil)
+    |> assign(:auto_submit_tick_ref, nil)
+    |> assign(:auto_submit_deadline_ms, nil)
+    |> assign(:auto_submit_remaining_ms, nil)
+  end
+
+  defp maybe_arm_auto_submit_timer(socket) do
+    config = socket.assigns.voice_turn_auto_submit
+
+    cond do
+      config[:enabled] != true ->
+        socket
+
+      socket.assigns.recording != true ->
+        socket
+
+      socket.assigns.auto_submit_in_flight == true ->
+        socket
+
+      socket.assigns.is_speaking == true ->
+        socket
+
+      socket.assigns.is_transcribing == true ->
+        socket
+
+      String.trim(socket.assigns.active_turn_text || "") == "" ->
+        socket
+
+      String.trim(socket.assigns.active_turn_text) == socket.assigns.last_submitted_snapshot ->
+        socket
+
+      true ->
+        now_ms = System.monotonic_time(:millisecond)
+        last_change_ms = socket.assigns.last_transcript_change_ms || now_ms
+
+        eligible_with_final? =
+          is_integer(socket.assigns.last_final_ms) and
+            is_binary(socket.assigns.final_snapshot) and
+            String.trim(socket.assigns.active_turn_text) == socket.assigns.final_snapshot
+
+        target_ms =
+          if eligible_with_final? do
+            config.min_pause_after_final_ms
+          else
+            config.fallback_stable_without_final_ms
+          end
+
+        elapsed_ms = max(0, now_ms - last_change_ms)
+        delay_ms = max(0, target_ms - elapsed_ms)
+
+        token = socket.assigns.auto_submit_token + 1
+        deadline_ms = now_ms + delay_ms
+
+        submit_ref =
+          Process.send_after(
+            self(),
+            {:auto_submit_timeout, socket.assigns.session_id, token},
+            delay_ms
+          )
+
+        tick_ref =
+          Process.send_after(
+            self(),
+            {:auto_submit_tick, socket.assigns.session_id, token},
+            200
+          )
+
+        socket
+        |> cancel_auto_submit_timer()
+        |> assign(:auto_submit_timer_ref, submit_ref)
+        |> assign(:auto_submit_tick_ref, tick_ref)
+        |> assign(:auto_submit_deadline_ms, deadline_ms)
+        |> assign(:auto_submit_remaining_ms, delay_ms)
+        |> assign(:auto_submit_token, token)
+    end
+  end
+
+  defp build_history_prompt(history, user_turn, max_messages) do
+    history = history |> Enum.take(-max_messages)
+
+    history_lines =
+      Enum.map(history, fn %{role: role, content: content} ->
+        role_label = role |> to_string() |> String.capitalize()
+        "#{role_label}: #{content}"
+      end)
+
+    Enum.join(history_lines ++ ["User: #{user_turn}", "Assistant:"], "\n")
+  end
+
+  defp submit_active_turn(socket, source) when source in [:manual, :auto] do
+    user_turn = socket.assigns.active_turn_text |> to_string() |> String.trim()
+
+    cond do
+      user_turn == "" ->
+        {:error, socket, "transcript is empty"}
+
+      socket.assigns.auto_submit_in_flight == true ->
+        {:error, socket, "already processing"}
+
+      user_turn == socket.assigns.last_submitted_snapshot ->
+        {:error, socket, "duplicate turn"}
+
+      true ->
+        config = socket.assigns.voice_turn_auto_submit
+        max_messages = config.history_max_messages
+
+        socket = socket |> cancel_auto_submit_timer() |> assign(:auto_submit_in_flight, true)
+
+        history_before = socket.assigns.conversation_history
+        history_with_user = history_before ++ [%{role: :user, content: user_turn, source: source}]
+
+        prompt = build_history_prompt(history_before, user_turn, max_messages)
+
+        case transform_text_with_dspy(prompt) do
+          {:ok, ai_output, _ai_status} ->
+            history_with_assistant =
+              history_with_user ++ [%{role: :assistant, content: ai_output}]
+
+            socket =
+              socket
+              |> assign(:conversation_history, history_with_assistant)
+              |> assign(:last_submitted_snapshot, user_turn)
+              |> assign(:active_turn_text, "")
+              |> assign(:transcript, "")
+              |> assign(:last_transcript_change_ms, nil)
+              |> assign(:last_final_ms, nil)
+              |> assign(:final_snapshot, nil)
+
+            case start_tts_session_and_speak(ai_output) do
+              {:ok, session_id, spoken_text} ->
+                {:ok,
+                 socket
+                 |> assign(:tts_text, spoken_text)
+                 |> assign(:tts_status, "speaking")
+                 |> assign(:tts_session_id, session_id)
+                 |> assign(:auto_submit_in_flight, false)
+                 |> push_event("tts_stream_start", %{"session_id" => session_id})}
+
+              {:error, message} ->
+                {:error,
+                 socket
+                 |> assign(:auto_submit_in_flight, false)
+                 |> assign(:tts_status, "error: #{message}"), message}
+            end
+
+          {:error, message} ->
+            {:error,
+             socket
+             |> assign(:auto_submit_in_flight, false)
+             |> assign(:tts_status, "error: #{message}"), message}
+        end
+    end
   end
 
   defp reset_stt_audio_gating(socket) do
@@ -453,7 +720,11 @@ defmodule SttPlaygroundWeb.SttLive do
   end
 
   defp emit_audio_gating(event_suffix, measurements, metadata) do
-    :telemetry.execute([:stt_playground, :stt, :audio_gating] ++ event_suffix, measurements, metadata)
+    :telemetry.execute(
+      [:stt_playground, :stt, :audio_gating] ++ event_suffix,
+      measurements,
+      metadata
+    )
   end
 
   defp update_speaking_from_pcm(socket, pcm_b64) do
@@ -485,6 +756,8 @@ defmodule SttPlaygroundWeb.SttLive do
     socket
     |> assign(:speech_activity_state, speech_state)
     |> assign(:is_speaking, speech_state.is_speaking)
+    |> cancel_auto_submit_timer()
+    |> assign(:auto_submit_in_flight, false)
     |> mark_transcription_caught_up()
     |> reset_stt_audio_gating()
   end
@@ -495,7 +768,10 @@ defmodule SttPlaygroundWeb.SttLive do
         socket
       ) do
     if socket.assigns.session_id == sid do
-      socket = socket |> assign(:transcript, text) |> assign(:status, "recording")
+      socket =
+        socket
+        |> update_active_turn_text(text)
+        |> assign(:status, "recording")
 
       # The current Python worker emits "partial" updates during an active session and only emits
       # a "final" when the session is explicitly stopped. To avoid a stuck indicator, treat the
@@ -507,7 +783,7 @@ defmodule SttPlaygroundWeb.SttLive do
           socket
         end
 
-      {:noreply, socket}
+      {:noreply, maybe_arm_auto_submit_timer(socket)}
     else
       {:noreply, socket}
     end
@@ -518,11 +794,17 @@ defmodule SttPlaygroundWeb.SttLive do
         socket
       ) do
     if socket.assigns.session_id == sid do
-      {:noreply,
-       socket
-       |> assign(:transcript, text)
-       |> assign(:status, "recording")
-       |> mark_transcription_caught_up()}
+      now_ms = System.monotonic_time(:millisecond)
+
+      socket =
+        socket
+        |> update_active_turn_text(text)
+        |> assign(:status, "recording")
+        |> assign(:last_final_ms, now_ms)
+        |> assign(:final_snapshot, String.trim(text))
+        |> mark_transcription_caught_up()
+
+      {:noreply, maybe_arm_auto_submit_timer(socket)}
     else
       {:noreply, socket}
     end
@@ -535,6 +817,56 @@ defmodule SttPlaygroundWeb.SttLive do
       ) do
     {:noreply,
      assign(socket, :status, "recording (overload: q=#{depth}, dropped=#{dropped_count})")}
+  end
+
+  def handle_info({:auto_submit_tick, sid, token}, socket) do
+    cond do
+      socket.assigns.session_id != sid ->
+        {:noreply, socket}
+
+      socket.assigns.auto_submit_token != token ->
+        {:noreply, socket}
+
+      is_nil(socket.assigns.auto_submit_timer_ref) ->
+        {:noreply, socket}
+
+      not is_integer(socket.assigns.auto_submit_deadline_ms) ->
+        {:noreply, socket}
+
+      true ->
+        now_ms = System.monotonic_time(:millisecond)
+        remaining_ms = max(0, socket.assigns.auto_submit_deadline_ms - now_ms)
+
+        if remaining_ms > 0 do
+          tick_ref =
+            Process.send_after(
+              self(),
+              {:auto_submit_tick, socket.assigns.session_id, token},
+              200
+            )
+
+          {:noreply,
+           socket
+           |> assign(:auto_submit_remaining_ms, remaining_ms)
+           |> assign(:auto_submit_tick_ref, tick_ref)}
+        else
+          {:noreply,
+           socket |> assign(:auto_submit_remaining_ms, 0) |> assign(:auto_submit_tick_ref, nil)}
+        end
+    end
+  end
+
+  def handle_info({:auto_submit_timeout, sid, token}, socket) do
+    socket = cancel_auto_submit_timer(socket)
+
+    if socket.assigns.session_id == sid and socket.assigns.auto_submit_token == token do
+      case submit_active_turn(socket, :auto) do
+        {:ok, socket} -> {:noreply, socket}
+        {:error, socket, _message} -> {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:transcribing_fallback_timeout, sid}, socket) do
@@ -582,8 +914,10 @@ defmodule SttPlaygroundWeb.SttLive do
 
   def handle_info({:tts_event, %{"event" => "session_done", "session_id" => sid}}, socket) do
     if socket.assigns.tts_session_id == sid do
-      if Process.whereis(SttPlayground.TTS.PythonPort) do
-        SttPlayground.TTS.PythonPort.stop_session(sid)
+      tts_mod = tts_port_module()
+
+      if Process.whereis(tts_mod) do
+        tts_mod.stop_session(sid)
       end
 
       {:noreply,

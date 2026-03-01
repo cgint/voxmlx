@@ -453,6 +453,42 @@ defmodule SttPlaygroundWeb.CoreComponents do
   end
 
   @doc """
+  Renders a unified conversation activity indicator.
+
+  Combines:
+  - whether recording is enabled,
+  - whether speech is currently detected (On Air),
+  - and a derived activity label (e.g., listening, speaking, finalizing, waiting-to-send).
+  """
+  attr :enabled, :boolean, required: true
+  attr :on_air_active, :boolean, required: true
+  attr :label, :string, required: true
+
+  def conversation_activity_indicator(assigns) do
+    assigns =
+      assigns
+      |> assign(:dot_class, if(assigns.on_air_active, do: "bg-red-500", else: "bg-gray-500"))
+      |> assign(:text_class, if(assigns.on_air_active, do: "text-red-700", else: "text-gray-700"))
+
+    ~H"""
+    <div
+      id="conversation-activity-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label={@label}
+      class={[
+        "inline-flex items-center gap-2 rounded border px-2 py-1 text-sm",
+        @enabled && "border-red-200 bg-red-50",
+        !@enabled && "border-gray-200 bg-gray-50"
+      ]}
+    >
+      <span class={["inline-block size-2 rounded-full", @dot_class]} />
+      <span class={[@text_class, "font-medium"]}>{@label}</span>
+    </div>
+    """
+  end
+
+  @doc """
   Renders a transcribing indicator while the app is still processing speech into text.
   """
   attr :label, :string, default: "Transcribing…"
@@ -468,6 +504,35 @@ defmodule SttPlaygroundWeb.CoreComponents do
     >
       <.icon name="hero-arrow-path" class="size-4 text-gray-500 motion-safe:animate-spin" />
       <span class="text-gray-700 font-medium">{@label}</span>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders an auto-submit countdown indicator.
+
+  This is shown while the app is waiting to auto-submit the current (stable) user turn.
+  """
+  attr :remaining_ms, :integer, required: true
+
+  def auto_submit_countdown_indicator(assigns) do
+    seconds = assigns.remaining_ms / 1000
+    label = :erlang.float_to_binary(seconds, decimals: 1)
+
+    assigns =
+      assigns
+      |> assign(:label, label)
+
+    ~H"""
+    <div
+      id="auto-submit-countdown-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label={"Auto-submit in #{@label}s"}
+      class="inline-flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-sm"
+    >
+      <.icon name="hero-clock" class="size-4 text-amber-700" />
+      <span class="text-amber-800 font-medium">Auto-submit in {@label}s</span>
     </div>
     """
   end

@@ -1,0 +1,66 @@
+direction: down
+
+record: {
+  label: "**Recording enabled**\nMic chunks → VAD (On Air)"
+  style.fill: "#E8F0FE"
+}
+
+gate: {
+  label: "**Audio gating**\nForward chunks to STT backend only when speaking\n(plus pre-roll on speech start)"
+  style.fill: "#F1F3F4"
+}
+
+partial: {
+  label: "**Partial transcript**\nUpdate active turn text"
+  style.fill: "#E6F4EA"
+}
+
+final: {
+  label: "**Final transcript segment**\nActive turn text considered settled candidate"
+  style.fill: "#E6F4EA"
+}
+
+pause: {
+  label: "**User pauses**\nOn Air = inactive\nWait for transcript to settle"
+  style.fill: "#FFF4E5"
+}
+
+countdown: {
+  label: "**Countdown (>=3s)**\nStart after final + stability\n(or stable >=3s without final)\nMeasured from last transcript change\nCancel on speech or transcript change"
+  style.fill: "#FFF4E5"
+}
+
+commit: {
+  label: "**Commit user turn**\nAppend once to history"
+  style.fill: "#FCE8E6"
+}
+
+ai: {
+  label: "**Generate response**\nPrompt from bounded history"
+  style.fill: "#F3E8FD"
+}
+
+tts: {
+  label: "**Speak response**\nCommit assistant turn"
+  style.fill: "#F3E8FD"
+}
+
+next: {
+  label: "**Next turn**\nReset active turn"
+  style.fill: "#E8F0FE"
+}
+
+record -> gate: "mic chunks"
+gate -> partial: "STT partial"
+partial -> partial: "more partials"
+partial -> final: "STT final"
+final -> pause: "speech inactive"
+record -> pause: "speech inactive"
+pause -> countdown: "final received + stable (or stable >=6s)"
+countdown -> pause: "transcript changes"
+countdown -> record: "speech resumes"
+countdown -> commit: "timer expires"
+commit -> ai
+ai -> tts
+tts -> next
+next -> record

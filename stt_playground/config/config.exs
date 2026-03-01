@@ -15,7 +15,13 @@ config :stt_playground,
   stt_overload_policy: :drop_newest,
   dspy_diagrammer_module: SttPlayground.AI.DSPyResponder,
   dspy_model: "ollama/llama3.2",
-  dspy_context_hints: ""
+  dspy_context_hints: "",
+  voice_turn_auto_submit: [
+    enabled: true,
+    min_pause_after_final_ms: 3_000,
+    fallback_stable_without_final_ms: 6_000,
+    history_max_messages: 12
+  ]
 
 # Configures the endpoint
 config :stt_playground, SttPlaygroundWeb.Endpoint,

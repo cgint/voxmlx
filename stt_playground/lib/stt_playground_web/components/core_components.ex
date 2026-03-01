@@ -419,6 +419,39 @@ defmodule SttPlaygroundWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders an On Air indicator used for speech activity.
+  """
+  attr :enabled, :boolean, required: true
+  attr :active, :boolean, required: true
+
+  def on_air_indicator(assigns) do
+    state_text = if assigns.active, do: "active", else: "inactive"
+
+    assigns =
+      assigns
+      |> assign(:state_text, state_text)
+      |> assign(:dot_class, if(assigns.active, do: "bg-red-500", else: "bg-gray-500"))
+      |> assign(:text_class, if(assigns.active, do: "text-red-700", else: "text-gray-500"))
+
+    ~H"""
+    <div
+      id="on-air-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label={"On Air #{@state_text}"}
+      class={[
+        "inline-flex items-center gap-2 rounded border px-2 py-1 text-sm",
+        @enabled && "border-red-200 bg-red-50",
+        !@enabled && "border-gray-200 bg-gray-50"
+      ]}
+    >
+      <span class={["inline-block size-2 rounded-full", @dot_class]} />
+      <span class={[@text_class, "font-medium"]}>On Air</span>
+    </div>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do

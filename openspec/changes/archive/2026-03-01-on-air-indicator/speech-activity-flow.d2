@@ -1,0 +1,32 @@
+direction: down
+
+stt: **STT active**
+
+sources: **Speech activity signals** {
+  events: **Engine events**
+  samples: **Audio energy samples**
+}
+
+detector: **SpeechActivityState** {
+  - hysteresis
+  - minSpeakMs
+  - minSilenceMs
+}
+
+state: **Output state** {
+  isSpeaking: isSpeaking (true/false)
+}
+
+ui: **OnAirIndicator UI** {
+  inactive: gray "On Air"
+  active: lit "On Air"
+}
+
+stt -> sources
+sources.events -> detector
+sources.samples -> detector
+
+stt -> detector: enabled/disabled
+
+detector -> state
+state -> ui

@@ -1,6 +1,9 @@
 defmodule SttPlaygroundWeb.SttLive do
   use SttPlaygroundWeb, :live_view
   require Logger
+
+  alias SttPlayground.STT.SpeechActivityState
+
   @default_dspy_module SttPlayground.AI.DSPyResponder
 
   @impl true
@@ -13,7 +16,9 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:transcript, "")
      |> assign(:tts_text, "")
      |> assign(:tts_status, "idle")
-     |> assign(:tts_session_id, nil)}
+     |> assign(:tts_session_id, nil)
+     |> assign(:speech_activity_state, speech_activity_initial_state())
+     |> assign(:is_speaking, false)}
   end
 
   @impl true
@@ -25,7 +30,11 @@ defmodule SttPlaygroundWeb.SttLive do
         <p class="text-gray-600 mb-2">
           LiveView -> Elixir GenServer -> Python subprocess (packet-4 framing)
         </p>
-        <p class="text-sm text-gray-500 mb-6">Status: {@status}</p>
+        <p class="text-sm text-gray-500 mb-3">Status: {@status}</p>
+
+        <div class="mb-6">
+          <.on_air_indicator enabled={@recording} active={@is_speaking} />
+        </div>
 
         <button
           id="mic-toggle"
@@ -161,11 +170,18 @@ defmodule SttPlaygroundWeb.SttLive do
       :ok = SttPlayground.STT.PythonPort.start_session(session_id, self())
       Logger.info("[live][#{session_id}] start")
 
+      now_ms = System.monotonic_time(:millisecond)
+
+      speech_state =
+        socket.assigns.speech_activity_state |> SpeechActivityState.set_enabled(true, now_ms)
+
       {:noreply,
        socket
        |> assign(:recording, true)
        |> assign(:status, "recording")
-       |> assign(:session_id, session_id)}
+       |> assign(:session_id, session_id)
+       |> assign(:speech_activity_state, speech_state)
+       |> assign(:is_speaking, speech_state.is_speaking)}
     end
   end
 
@@ -175,7 +191,7 @@ defmodule SttPlaygroundWeb.SttLive do
       SttPlayground.STT.PythonPort.push_chunk(session_id, pcm_b64)
     end
 
-    {:noreply, socket}
+    {:noreply, update_speaking_from_pcm(socket, pcm_b64)}
   end
 
   @impl true
@@ -185,12 +201,17 @@ defmodule SttPlaygroundWeb.SttLive do
       Logger.info("[live][#{session_id}] stop")
     end
 
-    {:noreply, assign(socket, :recording, false) |> assign(:status, "stopping")}
+    {:noreply,
+     disable_speech_activity(socket) |> assign(:recording, false) |> assign(:status, "stopping")}
   end
 
   @impl true
   def handle_event("audio_error", %{"message" => message}, socket) do
-    {:noreply, socket |> assign(:recording, false) |> assign(:status, "error: #{message}")}
+    {:noreply,
+     socket
+     |> disable_speech_activity()
+     |> assign(:recording, false)
+     |> assign(:status, "error: #{message}")}
   end
 
   defp transform_text_with_dspy(text) do
@@ -266,6 +287,42 @@ defmodule SttPlaygroundWeb.SttLive do
     end
   end
 
+  defp speech_activity_initial_state do
+    opts = Application.get_env(:stt_playground, :speech_activity, [])
+    SpeechActivityState.new(opts)
+  end
+
+  defp update_speaking_from_pcm(socket, pcm_b64) do
+    with {:ok, pcm} <- Base.decode64(pcm_b64),
+         rms <- SpeechActivityState.rms_from_pcm_f32(pcm, :native) do
+      now_ms = System.monotonic_time(:millisecond)
+
+      speech_state =
+        SpeechActivityState.ingest_energy(socket.assigns.speech_activity_state, rms, now_ms)
+
+      socket
+      |> assign(:speech_activity_state, speech_state)
+      |> assign(:is_speaking, speech_state.is_speaking)
+    else
+      _ ->
+        socket
+    end
+  rescue
+    _ ->
+      socket
+  end
+
+  defp disable_speech_activity(socket) do
+    now_ms = System.monotonic_time(:millisecond)
+
+    speech_state =
+      SpeechActivityState.set_enabled(socket.assigns.speech_activity_state, false, now_ms)
+
+    socket
+    |> assign(:speech_activity_state, speech_state)
+    |> assign(:is_speaking, speech_state.is_speaking)
+  end
+
   @impl true
   def handle_info(
         {:stt_event, %{"event" => "partial", "session_id" => sid, "text" => text}},
@@ -285,6 +342,7 @@ defmodule SttPlaygroundWeb.SttLive do
     if socket.assigns.session_id == sid do
       {:noreply,
        socket
+       |> disable_speech_activity()
        |> assign(:transcript, text)
        |> assign(:status, "done")
        |> assign(:session_id, nil)
@@ -304,7 +362,11 @@ defmodule SttPlaygroundWeb.SttLive do
   end
 
   def handle_info({:stt_event, %{"event" => "error", "message" => msg}}, socket) do
-    {:noreply, assign(socket, :status, "error: #{msg}")}
+    {:noreply,
+     socket
+     |> disable_speech_activity()
+     |> assign(:recording, false)
+     |> assign(:status, "error: #{msg}")}
   end
 
   def handle_info(

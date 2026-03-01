@@ -19,7 +19,7 @@ config :stt_playground,
   voice_turn_auto_submit: [
     enabled: true,
     min_pause_after_final_ms: 3_000,
-    fallback_stable_without_final_ms: 6_000,
+    fallback_stable_without_final_ms: 3_000,
     history_max_messages: 12
   ]
 

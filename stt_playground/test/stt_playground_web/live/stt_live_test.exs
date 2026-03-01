@@ -90,6 +90,63 @@ defmodule SttPlaygroundWeb.SttLiveTest do
     end
   end
 
+  defmodule RetryThenSuccessResponder do
+    @moduledoc false
+
+    def respond(opts) when is_list(opts) do
+      attempt = Keyword.get(opts, :attempt, 1)
+      test_pid = Application.get_env(:stt_playground, :test_pid)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:retry_responder_attempt, attempt})
+      end
+
+      if attempt == 1 do
+        {:error,
+         {:output_decode_failed,
+          %Jason.DecodeError{position: 12, token: nil, data: "{\"answer\":\"broken\""}}}
+      else
+        {:ok, "retry-ai"}
+      end
+    end
+  end
+
+  defmodule AlwaysDecodeFailureResponder do
+    @moduledoc false
+
+    def respond(opts) when is_list(opts) do
+      attempt = Keyword.get(opts, :attempt, 1)
+      test_pid = Application.get_env(:stt_playground, :test_pid)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:decode_fail_responder_attempt, attempt})
+      end
+
+      {:error,
+       {:output_decode_failed,
+        %Jason.DecodeError{position: 44, token: nil, data: "{\"answer\":\"still broken\""}}}
+    end
+  end
+
+  defmodule MissingAnswerThenSuccessResponder do
+    @moduledoc false
+
+    def respond(opts) when is_list(opts) do
+      attempt = Keyword.get(opts, :attempt, 1)
+      test_pid = Application.get_env(:stt_playground, :test_pid)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:missing_answer_responder_attempt, attempt})
+      end
+
+      if attempt == 1 do
+        {:error, :missing_answer_field}
+      else
+        {:ok, "fixed-after-missing-answer"}
+      end
+    end
+  end
+
   setup do
     start_supervised!({FakeSttPort, name: SttPlayground.STT.PythonPort, test_pid: self()})
     start_supervised!({FakeTtsPort, name: FakeTtsPort, test_pid: self()})
@@ -338,6 +395,7 @@ defmodule SttPlaygroundWeb.SttLiveTest do
 
         # TTS status should reflect actual playback state (not AI generation).
         assert current_assign(view, :tts_status) == "speaking"
+        assert current_assign(view, :tts_answer_status) == "success"
 
         assert current_assign(view, :active_turn_text) == ""
 
@@ -346,6 +404,66 @@ defmodule SttPlaygroundWeb.SttLiveTest do
         assert length(current_assign(view, :conversation_history)) == 2
       end
     )
+  end
+
+  test "retries once on decode failure and marks tts answer as recovered_success", %{conn: conn} do
+    with_dspy_module(RetryThenSuccessResponder, fn ->
+      with_voice_auto_submit_env([enabled: false], fn ->
+        {:ok, view, _html} = live(conn, "/")
+
+        render_change(view, "transcript_change", %{"transcript" => %{"text" => "Tell me a joke"}})
+        render_click(view, "ai_from_transcript", %{})
+
+        assert_receive {:retry_responder_attempt, 1}, 500
+        assert_receive {:retry_responder_attempt, 2}, 500
+
+        assert current_assign(view, :tts_answer_status) == "recovered_success"
+        assert current_assign(view, :tts_status) == "speaking"
+        assert current_assign(view, :tts_text) == "retry-ai"
+      end)
+    end)
+  end
+
+  test "retries once on missing answer field and marks recovered_success", %{conn: conn} do
+    with_dspy_module(MissingAnswerThenSuccessResponder, fn ->
+      with_voice_auto_submit_env([enabled: false], fn ->
+        {:ok, view, _html} = live(conn, "/")
+
+        render_change(view, "transcript_change", %{"transcript" => %{"text" => "Tell me a joke"}})
+        render_click(view, "ai_from_transcript", %{})
+
+        assert_receive {:missing_answer_responder_attempt, 1}, 500
+        assert_receive {:missing_answer_responder_attempt, 2}, 500
+
+        assert current_assign(view, :tts_answer_status) == "recovered_success"
+        assert current_assign(view, :tts_status) == "speaking"
+        assert current_assign(view, :tts_text) == "fixed-after-missing-answer"
+      end)
+    end)
+  end
+
+  test "returns terminal error without fallback text when retries are exhausted", %{conn: conn} do
+    with_dspy_module(AlwaysDecodeFailureResponder, fn ->
+      with_voice_auto_submit_env([enabled: false], fn ->
+        {:ok, view, _html} = live(conn, "/")
+
+        render_change(view, "transcript_change", %{"transcript" => %{"text" => "Tell me a joke"}})
+        render_click(view, "ai_from_transcript", %{})
+
+        assert_receive {:decode_fail_responder_attempt, 1}, 500
+        assert_receive {:decode_fail_responder_attempt, 2}, 500
+
+        assert current_assign(view, :tts_answer_status) == "error"
+        assert current_assign(view, :tts_text) == ""
+
+        assert String.contains?(
+                 current_assign(view, :tts_status),
+                 "error: AI response format was invalid after retry"
+               )
+
+        assert current_assign(view, :conversation_history) == []
+      end)
+    end)
   end
 
   test "shows auto-submit countdown and cancels it when the user starts speaking again", %{
@@ -462,6 +580,18 @@ defmodule SttPlaygroundWeb.SttLiveTest do
       fun.()
     after
       restore_env(:voice_turn_auto_submit, old)
+    end
+  end
+
+  defp with_dspy_module(module, fun) when is_atom(module) and is_function(fun, 0) do
+    old = Application.get_env(:stt_playground, :dspy_diagrammer_module, :__unset__)
+
+    Application.put_env(:stt_playground, :dspy_diagrammer_module, module)
+
+    try do
+      fun.()
+    after
+      restore_env(:dspy_diagrammer_module, old)
     end
   end
 

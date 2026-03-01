@@ -7,6 +7,13 @@ defmodule SttPlaygroundWeb.SttLive do
   @default_dspy_module SttPlayground.AI.DSPyResponder
 
   @transcribing_fallback_ms 12_000
+  @dspy_retry_limit 1
+
+  @dspy_retry_instruction_suffix """
+  Return ONLY valid JSON with exactly one top-level key: \"answer\".
+  Do not include markdown, backticks, comments, trailing commas, or extra keys.
+  The value for \"answer\" must be a non-empty string.
+  """
 
   @impl true
   def mount(_params, _session, socket) do
@@ -33,6 +40,7 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:transcript, "")
      |> assign(:tts_text, "")
      |> assign(:tts_status, "idle")
+     |> assign(:tts_answer_status, "idle")
      |> assign(:tts_session_id, nil)
      |> assign(:speech_activity_state, speech_activity_initial_state())
      |> assign(:is_speaking, false)
@@ -181,7 +189,8 @@ defmodule SttPlaygroundWeb.SttLive do
      |> assign(:last_final_ms, nil)
      |> assign(:final_snapshot, nil)
      |> assign(:last_submitted_snapshot, nil)
-     |> assign(:auto_submit_in_flight, false)}
+     |> assign(:auto_submit_in_flight, false)
+     |> assign(:tts_answer_status, "idle")}
   end
 
   @impl true
@@ -314,7 +323,7 @@ defmodule SttPlaygroundWeb.SttLive do
   defp transform_text_with_dspy(text) do
     case dspy_diagrammer_module() do
       nil ->
-        {:error, "DSPy module not configured"}
+        {:error, :provider_error, "DSPy module not configured"}
 
       module ->
         dspy_opts = [
@@ -324,12 +333,13 @@ defmodule SttPlaygroundWeb.SttLive do
           api_key: System.get_env("OLLAMA_API_KEY") || ""
         ]
 
-        invoke_dspy_module(module, dspy_opts)
+        invoke_dspy_module(module, dspy_opts, 1)
     end
   rescue
     e ->
       Logger.warning("[live][tts] DSPy transform exception: #{inspect(e)}")
-      {:error, "DSPy exception: #{inspect(e)}"}
+      emit_tts_answer_result(:error, :provider_error, 1)
+      {:error, :provider_error, "DSPy exception: #{inspect(e)}"}
   end
 
   defp dspy_diagrammer_module do
@@ -353,24 +363,97 @@ defmodule SttPlaygroundWeb.SttLive do
     end
   end
 
-  defp invoke_dspy_module(module, dspy_opts) do
-    result = apply(module, :respond, [dspy_opts])
+  defp invoke_dspy_module(module, dspy_opts, attempt) do
+    response_opts = Keyword.put(dspy_opts, :attempt, attempt)
+    result = apply(module, :respond, [response_opts])
 
     case result do
-      {:ok, output} when is_binary(output) and output != "" ->
-        {:ok, output, "ai ok (DSPy)"}
+      {:ok, output} when is_binary(output) ->
+        output = String.trim(output)
+
+        if output != "" do
+          outcome = if(attempt == 1, do: :success, else: :recovered_success)
+          emit_tts_answer_result(outcome, nil, attempt)
+          {:ok, output, outcome}
+        else
+          maybe_retry_or_fail(module, dspy_opts, attempt, :empty_answer, :empty_output)
+        end
 
       {:ok, _} ->
-        {:error, "DSPy returned empty output"}
+        maybe_retry_or_fail(module, dspy_opts, attempt, :empty_answer, :empty_output)
 
       {:error, reason} ->
-        Logger.warning("[live][tts] DSPy transform failed: #{inspect(reason)}")
-        {:error, "DSPy failed: #{inspect(reason)}"}
+        class = classify_dspy_failure(reason)
+        maybe_retry_or_fail(module, dspy_opts, attempt, class, reason)
 
       other ->
-        Logger.warning("[live][tts] DSPy transform unexpected result: #{inspect(other)}")
-        {:error, "DSPy returned unexpected result"}
+        maybe_retry_or_fail(
+          module,
+          dspy_opts,
+          attempt,
+          :provider_error,
+          {:unexpected_result, other}
+        )
     end
+  end
+
+  defp maybe_retry_or_fail(module, dspy_opts, attempt, class, reason) do
+    if recoverable_dspy_failure?(class) and attempt <= @dspy_retry_limit do
+      Logger.warning(
+        "[live][tts] DSPy recoverable failure class=#{class} attempt=#{attempt}: #{inspect(reason)}"
+      )
+
+      retry_opts = Keyword.put(dspy_opts, :instruction, strict_retry_instruction(dspy_opts))
+      invoke_dspy_module(module, retry_opts, attempt + 1)
+    else
+      Logger.warning("[live][tts] DSPy terminal failure class=#{class}: #{inspect(reason)}")
+      emit_tts_answer_result(:error, class, attempt)
+      {:error, class, dspy_error_message(class)}
+    end
+  end
+
+  defp strict_retry_instruction(dspy_opts) do
+    base_instruction =
+      dspy_opts
+      |> Keyword.get(:instruction, "")
+      |> to_string()
+      |> String.trim()
+
+    [base_instruction, @dspy_retry_instruction_suffix]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+  end
+
+  defp recoverable_dspy_failure?(class) do
+    class in [:output_decode_failed, :missing_answer_field, :empty_answer]
+  end
+
+  defp classify_dspy_failure({:output_decode_failed, _}), do: :output_decode_failed
+  defp classify_dspy_failure(:empty_output), do: :empty_answer
+  defp classify_dspy_failure(:empty_answer), do: :empty_answer
+  defp classify_dspy_failure(:missing_answer_field), do: :missing_answer_field
+  defp classify_dspy_failure(:timeout), do: :timeout
+  defp classify_dspy_failure(:missing_api_key), do: :provider_error
+  defp classify_dspy_failure(_), do: :provider_error
+
+  defp dspy_error_message(:output_decode_failed), do: "AI response format was invalid after retry"
+  defp dspy_error_message(:missing_answer_field), do: "AI response was missing the answer field"
+  defp dspy_error_message(:empty_answer), do: "AI response answer was empty"
+  defp dspy_error_message(:timeout), do: "AI request timed out"
+  defp dspy_error_message(:provider_error), do: "AI request failed"
+  defp dspy_error_message(_), do: "AI request failed"
+
+  defp emit_tts_answer_result(outcome, failure_class, attempt_count) do
+    :telemetry.execute(
+      [:stt_playground, :ai, :tts_answer, :result],
+      %{count: 1},
+      %{
+        outcome: outcome,
+        failure_class: failure_class,
+        attempt_count: attempt_count,
+        retry_used: attempt_count > 1
+      }
+    )
   end
 
   defp start_tts_session_and_speak(text) do
@@ -562,7 +645,7 @@ defmodule SttPlaygroundWeb.SttLive do
         prompt = build_history_prompt(history_before, user_turn, max_messages)
 
         case transform_text_with_dspy(prompt) do
-          {:ok, ai_output, _ai_status} ->
+          {:ok, ai_output, answer_outcome} ->
             history_with_assistant =
               history_with_user ++ [%{role: :assistant, content: ai_output}]
 
@@ -575,6 +658,7 @@ defmodule SttPlaygroundWeb.SttLive do
               |> assign(:last_transcript_change_ms, nil)
               |> assign(:last_final_ms, nil)
               |> assign(:final_snapshot, nil)
+              |> assign(:tts_answer_status, Atom.to_string(answer_outcome))
 
             case start_tts_session_and_speak(ai_output) do
               {:ok, session_id, spoken_text} ->
@@ -593,10 +677,11 @@ defmodule SttPlaygroundWeb.SttLive do
                  |> assign(:tts_status, "error: #{message}"), message}
             end
 
-          {:error, message} ->
+          {:error, _class, message} ->
             {:error,
              socket
              |> assign(:auto_submit_in_flight, false)
+             |> assign(:tts_answer_status, "error")
              |> assign(:tts_status, "error: #{message}"), message}
         end
     end

@@ -49,6 +49,7 @@ defmodule SttPlayground.AI.DSPyClient do
           model: String.replace_prefix(model, "ollama/", ""),
           opts: [base_url: ollama_base_url()]
         }
+
       String.starts_with?(model, "ollama:") ->
         %{
           backend: :ollama,
@@ -62,7 +63,8 @@ defmodule SttPlayground.AI.DSPyClient do
   end
 
   defp resolve_api_key(%{backend: :ollama}, user_opts) do
-    case normalize_api_key(Keyword.get(user_opts, :api_key)) || normalize_api_key(System.get_env("OLLAMA_API_KEY")) do
+    case normalize_api_key(Keyword.get(user_opts, :api_key)) ||
+           normalize_api_key(System.get_env("OLLAMA_API_KEY")) do
       nil -> "ollama"
       key -> key
     end
@@ -98,7 +100,9 @@ defmodule SttPlayground.AI.DSPyClient do
   end
 
   defp maybe_put_thinking_budget(opts, %{backend: :ollama}, _value), do: opts
-  defp maybe_put_thinking_budget(opts, _model_spec, value), do: maybe_put(opts, :thinking_budget, value)
+
+  defp maybe_put_thinking_budget(opts, _model_spec, value),
+    do: maybe_put(opts, :thinking_budget, value)
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)

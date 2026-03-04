@@ -31,7 +31,7 @@ The playground's DSPy response path is configured to use local Ollama by default
 - base URL: `http://localhost:11434/v1` (override with `OLLAMA_BASE_URL`)
 - API key: optional (`OLLAMA_API_KEY` may be empty for local setups)
 
-Quick smoke test for the DSPy + Ollama path:
+Smoke test for the DSPy + Ollama path:
 
 ```bash
 cd stt_playground
